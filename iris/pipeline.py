@@ -184,7 +184,7 @@ class Conversation:
                     timing["first_chunk_synth"] = time.perf_counter() - t0
                     first = False
                     self.on_first_audio_queued()
-                self.player.enqueue(res.audio, idx, res.sr)
+                self.player.enqueue(res.audio, idx, res.sr, text=strip_cues(text))
 
         worker = None
         if voiced:
@@ -281,7 +281,7 @@ class Conversation:
             opts = synth_opts(self.s, engine) if engine not in ("tone", "") else {}
             res = self.tts.synth(text, speed=float(self.s.knob("tts.speed", 1.0)), opts=opts)
             self.player.begin_reply()
-            self.player.enqueue(res.audio, 0, res.sr)
+            self.player.enqueue(res.audio, 0, res.sr, text=text)
             self.player.end_reply()
             self.player.wait(15)
         except Exception as e:

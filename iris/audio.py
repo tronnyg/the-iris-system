@@ -188,6 +188,8 @@ class Recorder:
 
     # -- frames -----------------------------------------------------------------------
     def feed(self, frame: np.ndarray) -> None:
+        lv = min(1.0, max(0.0, (dbfs(frame) + 60.0) / 45.0))
+        self.level = 0.6 * getattr(self, "level", 0.0) + 0.4 * lv
         if self.mode == "ptt" or self.recording:
             if self.recording:
                 self.ptt_buf.append(frame)
@@ -253,6 +255,9 @@ class Player:
         self.done = threading.Event()
         self.done.set()
         self.stream = None
+        self.labels: dict[int, str] = {}           # chunk index -> text (for live captions)
+        self.on_chunk_start: Callable[[str, float], None] | None = None
+        self.level = 0.0                           # 0..1, smoothed output loudness (for the UI)
 
     def start(self) -> None:
         import sounddevice as sd
@@ -274,18 +279,21 @@ class Player:
             self.q.clear()
             self.cur, self.cur_pos, self.cur_idx = None, 0, -1
             self.stats = PlayStats()
+            self.labels = {}
             self.active = True
             self.more_coming = True
             self._gap_start = None
             self.done.clear()
 
-    def enqueue(self, audio: np.ndarray, idx: int, sr: int | None = None) -> None:
+    def enqueue(self, audio: np.ndarray, idx: int, sr: int | None = None, text: str | None = None) -> None:
         if sr and sr != self.sr:
             from .stt import resample
             audio = resample(audio, sr, self.sr)
         with self.lock:
             if self.active:
                 self.q.append((idx, np.asarray(audio, dtype=np.float32)))
+                if text:
+                    self.labels[idx] = text
 
     def end_reply(self) -> None:
         with self.lock:
@@ -324,6 +332,11 @@ class Player:
                         self._gap_start = None
                     if self.stats.t_first_audio is None:
                         self.stats.t_first_audio = time.perf_counter()
+                    if self.on_chunk_start and self.cur_idx in self.labels:
+                        try:
+                            self.on_chunk_start(self.labels[self.cur_idx], len(self.cur) / self.sr)
+                        except Exception:
+                            pass
                 take = min(n - i, len(self.cur) - self.cur_pos)
                 out[i:i + take] = self.cur[self.cur_pos:self.cur_pos + take]
                 self.cur_pos += take
@@ -331,6 +344,8 @@ class Player:
                 if self.cur_pos >= len(self.cur):
                     self.cur = None
             self.stats.played_s += i / self.sr
+            rms = float(np.sqrt(np.mean(out * out))) if n else 0.0
+            self.level = 0.6 * self.level + 0.4 * min(1.0, rms * 6)
             if self.cur is None and not self.q:
                 if self.more_coming:
                     if self.stats.t_first_audio is not None and self._gap_start is None:

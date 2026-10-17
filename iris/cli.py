@@ -21,8 +21,10 @@ def _settings():
 # -- conversation -----------------------------------------------------------------------
 def cmd_talk(a) -> None:
     from .talk import Session
-    s = Session(mode="vad" if a.vad else "ptt", engine=a.engine, speak=not a.silent,
-                listen=not a.no_mic, no_audio_device=a.no_audio, mic=getattr(a, "mic", None))
+    ui = getattr(a, "ui", False)
+    s = Session(mode="vad" if (a.vad or ui) and not getattr(a, "ptt", False) else "ptt", engine=a.engine,
+                speak=not a.silent, listen=not a.no_mic, no_audio_device=a.no_audio,
+                mic=getattr(a, "mic", None), ui=ui)
     s.run()
     if not a.no_sleep:
         print("Reflecting on this session (memory + lessons) ...", flush=True)
@@ -354,6 +356,11 @@ def main(argv=None) -> None:
         p.add_argument("--no-audio", action="store_true", help="no sound card (testing)")
         p.add_argument("--no-sleep", action="store_true", help="skip the reflection after the session")
         p.add_argument("--mic", help="input device: index or part of its name (see `iris mic --list`)")
+        p.add_argument("--ui", action="store_true", help="full-screen animated eye with live captions (hands-free)")
+        p.add_argument("--ptt", action="store_true", help="with --ui: push-to-talk (Space) instead of hands-free")
+    p = add("eye", lambda a: __import__("iris.ui", fromlist=["demo"]).demo(a.seconds),
+            "preview the --ui animation without loading any models")
+    p.add_argument("--seconds", type=float, default=24.0)
     p = add("mic", cmd_mic, "test the microphone: level, what Whisper hears, which device")
     p.add_argument("--list", action="store_true", help="list input devices and exit")
     p.add_argument("--device", help="index or part of a device name (default: the one iris talk uses)")

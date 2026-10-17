@@ -64,7 +64,7 @@ While talking:
 | `/vad` / `/ptt` | hands-free mode / back to push-to-talk |
 | `/q` | quit; a short reflection runs and updates memory |
 
-Other ways in: `iris talk --vad` (hands-free from the start), `iris chat` (typed, spoken replies),
+Other ways in: `iris talk --ui` (full-screen animated iris with live captions, hands-free; keys: Enter/Space interrupt, `t` type, `+ = -` rate, `m` hands-free/push-to-talk, `q` quit; preview it with `iris eye`), `iris talk --vad` (hands-free from the start), `iris chat` (typed, spoken replies),
 `iris chat --silent` (text only), `iris say "some text" --engine chatterbox` (hear a voice).
 
 Global hotkey on Hyprland: see [scripts/hyprland-ptt.conf](scripts/hyprland-ptt.conf)

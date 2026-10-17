@@ -36,8 +36,10 @@ from .util import log
 
 class Session:
     def __init__(self, mode: str = "ptt", engine: str | None = None, speak: bool = True,
-                 listen: bool = True, no_audio_device: bool = False, mic=None):
+                 listen: bool = True, no_audio_device: bool = False, mic=None, ui: bool = False):
         self.mic = mic
+        self.ui = None
+        self.want_ui = ui
         paths.ensure_dirs()
         selfstore.init()
         self.s = Settings.load()
@@ -91,7 +93,7 @@ class Session:
             print(f"  mic: {mic_name(device)}" + ("   (hands-free: just talk)" if self.mode == "vad" else ""),
                   flush=True)
         self.conv = Conversation(self.s, self.llm, self.tts, self.player, self.writer, self.memory,
-                                 on_text=lambda t: print(f"  {name}: {t}", flush=True),
+                                 on_text=lambda t: self.ui is None and print(f"  {name}: {t}", flush=True),
                                  on_first_audio_queued=self._on_first_audio)
         self.writer.event("session_start", mode=self.mode, agent=paths.agent(),
                           persona=self.s.persona_name, config={"self": selfstore.head(), "knobs": self.s.knobs()},
@@ -108,7 +110,7 @@ class Session:
                 self.recorder.set_paused(True)     # half-duplex: don't hear ourselves
 
     def _on_speech_start(self) -> None:
-        if self.mode == "vad":
+        if self.mode == "vad" and self.ui is None:
             print("  ● hearing you...", flush=True)
         # In VAD mode: if the user starts speaking again before the reply plays, the
         # previous end-of-speech was premature. Abandon that reply; the merged utterance follows.
@@ -163,10 +165,16 @@ class Session:
             peak = 20 * np.log10(float(np.max(np.abs(a))) + 1e-9) if len(a) else -120
             why = f'whisper heard "{tr.text}"' if tr.text else "whisper heard no words"
             hint = "  -> your mic is very quiet or the wrong device: run `iris mic`" if peak < -30 else ""
-            print(f"  (heard nothing useful: {why}, loudest {peak:.0f} dB, "
-                  f"no-speech {tr.no_speech_prob if tr.no_speech_prob is not None else '?'}){hint}", flush=True)
+            if self.ui:
+                self.ui.note("(didn't catch that)" if peak >= -30 else "(mic is very quiet: try `iris mic`)")
+            else:
+                print(f"  (heard nothing useful: {why}, loudest {peak:.0f} dB, "
+                      f"no-speech {tr.no_speech_prob if tr.no_speech_prob is not None else '?'}){hint}", flush=True)
             return
-        print(f"  you: {tr.text}", flush=True)
+        if self.ui:
+            self.ui.user_said(tr.text)
+        else:
+            print(f"  you: {tr.text}", flush=True)
         self.conv.respond(tr.text, mode=utt.method, t_end=utt.t_end, stt=tr.as_dict(),
                           endpoint=endpoint, audio_in=audio_rel, stt_done_s=stt_done, speak=self.speak)
 
@@ -183,7 +191,7 @@ class Session:
             self.recorder.ptt_up()
         else:
             self.recorder.ptt_toggle()
-        if self.recorder.recording:
+        if self.recorder.recording and self.ui is None:
             print("  ● listening... (Enter to stop)", flush=True)
 
     def _socket_server(self) -> None:
@@ -212,8 +220,101 @@ class Session:
                 self.running = False
         srv.close()
 
+    # -- full-screen face (--ui) ---------------------------------------------------------
+    def probe(self) -> tuple[str, float]:
+        """What the eye should show right now, and how loud."""
+        p, r = self.player, self.recorder
+        if p is not None and p.active and p.stats.t_first_audio is not None:
+            return "speaking", p.level
+        if r is not None and (r.recording or r.vad.in_speech):
+            return "hearing", getattr(r, "level", 0.0)
+        if self.busy_job or self.jobs.unfinished_tasks or (self.conv and self.conv.busy()):
+            return "thinking", 0.0
+        return "idle", 0.0
+
+    def _quiet_logs(self) -> None:
+        """Logs (and C libraries writing to stderr) would tear the picture: send them to a file."""
+        import logging
+        f = paths.logs_dir() / "talk-ui.log"
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+                root.removeHandler(h)
+        fh = logging.FileHandler(f)
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname).1s %(name)s: %(message)s", "%H:%M:%S"))
+        root.addHandler(fh)
+        if root.level == logging.NOTSET or root.level > logging.INFO:
+            root.setLevel(logging.INFO)
+        self._stderr_saved = os.dup(2)
+        self._stderr_file = open(f, "a")
+        os.dup2(self._stderr_file.fileno(), 2)
+
+    def _restore_stderr(self) -> None:
+        if getattr(self, "_stderr_saved", None) is not None:
+            os.dup2(self._stderr_saved, 2)
+            os.close(self._stderr_saved)
+            self._stderr_saved = None
+
+    def run_ui(self) -> None:
+        from .ui import EyeUI, Keys
+        with locks.hold("live"):
+            self.boot()
+            self._quiet_logs()
+            self.ui = EyeUI(name=self.s.display_name, probe=self.probe)
+            if self.player is not None:
+                self.player.on_chunk_start = self.ui.agent_chunk
+            self.ui.start()
+            try:
+                greeting = self.s.persona.get("greeting")
+                if greeting and self.speak:
+                    self.conv._say_simple(greeting, True)
+                with Keys() as keys:
+                    while self.running:
+                        ch = keys.read(0.1)
+                        if ch is None:
+                            continue
+                        if self.ui.typing is not None:           # typing a message
+                            if ch in ("\n", "\r"):
+                                text, self.ui.typing = self.ui.typing.strip(), None
+                                if text:
+                                    self.ui.user_said(text)
+                                    self.jobs.put(("text", text))
+                            elif ch == "\x1b":
+                                self.ui.typing = None
+                            elif ch in ("\x7f", "\b"):
+                                self.ui.typing = self.ui.typing[:-1]
+                            elif ch.isprintable():
+                                self.ui.typing += ch
+                            continue
+                        if ch in ("q", "Q"):
+                            if self.conv and self.conv.busy():
+                                self.conv.interrupt("quit")
+                            self.drain(10)
+                            break
+                        if ch in ("\n", "\r", " "):
+                            if self.conv and self.conv.busy():
+                                self.conv.interrupt("barge_in")
+                            elif self.mode == "ptt":
+                                self.ptt("toggle")
+                        elif ch in ("t", "T"):
+                            self.ui.typing = ""
+                        elif ch in ("+", "=", "-"):
+                            self.jobs.put(("text", ch))
+                            self.ui.note({"+": "rated good", "=": "rated okay", "-": "rated bad"}[ch])
+                        elif ch in ("m", "M") and self.recorder:
+                            self.mode = self.recorder.mode = "ptt" if self.mode == "vad" else "vad"
+                            self.ui.note("hands-free" if self.mode == "vad" else "push-to-talk: Space to talk")
+            except KeyboardInterrupt:
+                pass
+            finally:
+                self.ui.stop()
+                self._restore_stderr()
+                self.shutdown()
+
     # -- terminal -----------------------------------------------------------------------
     def run(self) -> None:
+        if self.want_ui:
+            return self.run_ui()
         with locks.hold("live"):
             self.boot()
             hint = "Enter = talk/stop, or type a message" if self.listen else "type a message"

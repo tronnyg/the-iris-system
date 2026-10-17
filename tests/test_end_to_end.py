@@ -67,3 +67,45 @@ def test_night_with_llm_creates_prompt_proposal(ollama, iris_home):
     from iris.config import Settings
     assert "under twenty words" in Settings.load().system_prompt
     assert selfstore.proposals() == []
+
+
+def test_cli_talk_ui_in_a_terminal(ollama, iris_home):
+    """--ui draws the eye in a pseudo-terminal, takes a typed message, speaks it, quits cleanly."""
+    import pty
+    import re
+    import select
+    import time as _t
+    env = dict(os.environ, OLLAMA_HOST=ollama, IRIS_HOME=str(iris_home), PYTHONPATH=str(REPO),
+               COLUMNS="100", LINES="34", TERM="xterm-256color")
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.chdir(REPO)
+        os.execvpe(sys.executable, [sys.executable, "-m", "iris.cli", "talk", "--ui", "--engine", "tone",
+                                    "--no-audio", "--no-mic", "--no-sleep"], env)
+    out = b""
+
+    def pump(secs):
+        nonlocal out
+        end = _t.time() + secs
+        while _t.time() < end:
+            r, _, _ = select.select([fd], [], [], 0.05)
+            if r:
+                try:
+                    out += os.read(fd, 65536)
+                except OSError:
+                    return
+
+    pump(6)
+    for ch in "tcapital of japan?\r":
+        os.write(fd, ch.encode())
+        _t.sleep(0.02)
+    pump(6)
+    os.write(fd, b"q")
+    pump(4)
+    _, status = os.waitpid(pid, 0)
+    text = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b"", out).decode(errors="ignore")
+    assert os.WEXITSTATUS(status) == 0, text[-2000:]
+    assert "@" in text and "%" in text                  # the eye was drawn
+    assert "Tokyo" in text                              # the reply was captioned as it played
+    assert "\x1b[?1049l" in out.decode(errors="ignore")  # terminal restored
+    assert trace.turns() and "Tokyo" in trace.turns()[0]["reply_spoken"]
