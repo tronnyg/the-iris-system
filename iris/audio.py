@@ -21,6 +21,16 @@ FRAME_MS = 20
 FRAME = MIC_SR * FRAME_MS // 1000
 
 
+def input_rate(device=None) -> int:
+    """16 kHz if the device accepts it, else its own rate (frames are resampled to 16 kHz)."""
+    import sounddevice as sd
+    try:
+        sd.check_input_settings(device=device, samplerate=MIC_SR, channels=1, dtype="float32")
+        return MIC_SR
+    except Exception:
+        return int(sd.query_devices(device, kind="input")["default_samplerate"])
+
+
 def dbfs(frame: np.ndarray) -> float:
     rms = float(np.sqrt(np.mean(np.square(frame, dtype=np.float64)) + 1e-12))
     return 20.0 * np.log10(rms + 1e-12)
@@ -127,8 +137,10 @@ class Recorder:
     # -- device -----------------------------------------------------------------------
     def start(self) -> None:
         import sounddevice as sd
-        self.stream = sd.InputStream(samplerate=MIC_SR, channels=1, dtype="float32",
-                                     blocksize=FRAME, device=self.device, callback=self._cb)
+        self.rate = input_rate(self.device)
+        self.stream = sd.InputStream(samplerate=self.rate, channels=1, dtype="float32",
+                                     blocksize=self.rate * FRAME_MS // 1000, device=self.device,
+                                     callback=self._cb)
         self.stream.start()
         self.running = True
         threading.Thread(target=self._loop, daemon=True).start()
@@ -140,7 +152,10 @@ class Recorder:
             self.stream.close()
 
     def _cb(self, indata, frames, t, status) -> None:
-        self.frames.put(indata[:, 0].copy())
+        x = indata[:, 0].copy()
+        if getattr(self, "rate", MIC_SR) != MIC_SR:      # device can't do 16 kHz: resample each frame
+            x = np.interp(np.linspace(0, len(x), FRAME, endpoint=False), np.arange(len(x)), x).astype(np.float32)
+        self.frames.put(x)
 
     def _loop(self) -> None:
         while self.running:

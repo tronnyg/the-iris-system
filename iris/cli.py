@@ -37,11 +37,15 @@ def cmd_talk(a) -> None:
 def cmd_mic(a) -> None:
     import numpy as np
     import sounddevice as sd
-    from .audio import MIC_SR
+    from .audio import MIC_SR, input_rate
+    from .stt import resample
     from .talk import mic_device, mic_name
     s = _settings()
     if a.list:
-        default_in = sd.default.device[0] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
+        try:
+            default_in = sd.query_devices(kind="input")["index"]
+        except Exception:
+            default_in = None
         for i, d in enumerate(sd.query_devices()):
             if d["max_input_channels"] > 0:
                 mark = "*" if i == default_in else " "
@@ -52,12 +56,15 @@ def cmd_mic(a) -> None:
     dev = mic_device(a.device, s)
     print(f"device: {mic_name(dev)}")
     print("measuring room noise (stay quiet) ...", flush=True)
-    quiet = sd.rec(int(1.5 * MIC_SR), samplerate=MIC_SR, channels=1, dtype="float32", device=dev)
+    rate = input_rate(dev)
+    if rate != MIC_SR:
+        print(f"(device runs at {rate} Hz; resampling to {MIC_SR})")
+    quiet = sd.rec(int(1.5 * rate), samplerate=rate, channels=1, dtype="float32", device=dev)
     sd.wait()
     print(f"now speak normally for {a.seconds:.0f} seconds ...", flush=True)
-    rec = sd.rec(int(a.seconds * MIC_SR), samplerate=MIC_SR, channels=1, dtype="float32", device=dev)
+    rec = sd.rec(int(a.seconds * rate), samplerate=rate, channels=1, dtype="float32", device=dev)
     sd.wait()
-    q, x = quiet[:, 0], rec[:, 0]
+    q, x = resample(quiet[:, 0], rate, MIC_SR), resample(rec[:, 0], rate, MIC_SR)
     db = lambda v: 20 * np.log10(float(v) + 1e-9)
     noise, rms, peak = db(np.sqrt(np.mean(q ** 2))), db(np.sqrt(np.mean(x ** 2))), db(np.max(np.abs(x)))
     out = paths.logs_dir() / "mic-test.wav"
