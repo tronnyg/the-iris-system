@@ -9,7 +9,8 @@
   const S = { info: {}, targets: {}, turns: [], cur: null, tokens: 0, lastTurn: 0, state: "booting", ended: false };
 
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const fmt = (v, d = 2) => (typeof v === "number" ? (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(d)) : "–");
+  const fmt = (v, d = 2) => (typeof v !== "number" ? "–" : Number.isInteger(v) || Math.abs(v) >= 100 ? v.toFixed(0)
+    : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(d));
   const bar = (frac, n = 12) => { const k = Math.round(Math.max(0, Math.min(1, frac)) * n); return "█".repeat(k) + "░".repeat(n - k); };
 
   async function cmd(body) {
@@ -154,7 +155,7 @@
       let cls = "", frac = 0;
       if (typeof v === "number" && t) { cls = (dir === "low" ? v <= t : v >= t) ? "good" : "bad"; frac = Math.min(1, v / (t * 2)); }
       else if (typeof v === "number") frac = k === "llm_tok_s" ? Math.min(1, v / 80) : Math.min(1, v / 3);
-      return `<div class="v ${cls}"><span>${esc(label)} <span class="bar">${bar(frac, 10)}</span></span>` +
+      return `<div class="v ${cls}"><span>${esc(label)} <span class="meter-txt">${bar(frac, 10)}</span></span>` +
         `<span class="val">${fmt(v)}${unit}${t ? ` <span class="dim">/ ${t}</span>` : ""}</span></div>`;
     }).join("");
   }
@@ -247,7 +248,11 @@
       const r = await fetch(`/api/state?token=${encodeURIComponent(TOKEN)}`);
       const st = await r.json();
       S.info = st.info || {}; S.targets = st.targets || {};
-      if (!DEMO && S.info.turns && !S.turns.length) { S.turns = S.info.turns.slice(-10); latency(); }
+      if (!DEMO && S.info.turns && !S.turns.length && S.info.turns.length) {
+        // opened mid-session: replay this session's turns into the dialogue
+        S.info.turns.slice(-20).forEach((x) => { addYou(x.user || ""); onSay(x.reply || "(no reply)"); onSpoken(x.reply || "(no reply)"); onTurn(x); });
+        S.turns = S.info.turns.slice(-10); latency();
+      }
       chips(); vitals(st.metrics || {}); lists(st.lists || []); findings(st.findings || []); knobs(st.knobs || {}); jobs(st.jobs); sys(st);
       $("#report").classList.toggle("hidden", !st.report);
     } catch (e) { /* server gone: the SSE handler shows it */ }
@@ -348,7 +353,8 @@
     knobs({ "tts.speed": { value: 1, min: 0.85, max: 1.2, step: 0.05 }, "tts.volume_db": { value: 0, min: -12, max: 12, step: 2 } });
     sys({ ollama: { mode: "managed", iris: { up: true, url: "http://127.0.0.1:11435", version: "demo", loaded: [{ name: "qwen3:4b", vram_mb: 3400 }] } } });
     $("#conn").className = "conn on"; $("#conn").textContent = "● demo";
-    const seq = [["idle", 4000], ["hearing", 2600], ["thinking", 2200], ["speaking", 3800], ["idle", 3000], ["asleep", 3000]];
+    const fixed = qs.get("state");                     // ?demo=1&state=speaking holds one state (for checking a look)
+    const seq = fixed ? [[fixed, 1e9]] : [["idle", 4000], ["hearing", 2600], ["thinking", 2200], ["speaking", 3800], ["idle", 3000], ["asleep", 3000]];
     let i = 0;
     const next = () => {
       const [s, ms] = seq[i++ % seq.length];
@@ -366,6 +372,6 @@
     }, 90);
   }
 
-  if (DEMO) { demo(); if (TOKEN) connect(); }
+  if (DEMO) demo();
   else { connect(); refresh(); setInterval(refresh, 20000); setState("idle", 0, 0); }
 })();

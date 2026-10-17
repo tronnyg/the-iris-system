@@ -71,6 +71,22 @@ def measure(model: str, num_ctx: int, url: str | None = None, extra: dict | None
     return out
 
 
+LEAK_PROMPT = [{"role": "user", "content": "What is 2 plus 2? Answer with one word only."}]
+_REASONING = ("the user", "let me think", "okay, so", "we are to", "i need to", "first,", "hmm")
+
+
+def reasoning_leak(model: str, url: str | None = None) -> dict:
+    """Does the model still write out its reasoning with thinking switched off?
+
+    Some builds (e.g. always-thinking Qwen3 variants) ignore `think: false` and put the
+    whole chain of thought into the reply, which IRIS would then speak."""
+    llm = Ollama(model, url=url, keep_alive="2m")
+    text = "".join(llm.stream(LEAK_PROMPT, options={"temperature": 0, "seed": 1, "num_predict": 60}))
+    low = text.lower()
+    leaks = len(text.split()) > 8 or any(k in low for k in _REASONING)
+    return {"model": model, "leaks": leaks, "reply": text[:200]}
+
+
 def tool_cases(root: Path) -> list[dict]:
     p = root / "evals" / "tools.yaml"
     try:
@@ -138,14 +154,25 @@ def run(night) -> dict:
                 out["llm"].append(_record("llm", measure(m, ctx, extra=ollama_ctl.profile(s, m))))
             except Exception as e:
                 out["llm"].append({"model": m, "num_ctx": ctx, "error": f"{type(e).__name__}: {e}"})
+    out["leak"] = []
     for m in models[:1] if night.idle else models:
         if night.should_stop():
             out["stopped"] = True
             return out
         try:
+            out["leak"].append(_record("leak", reasoning_leak(m)))
             out["tools"].append(_record("tools", tool_accuracy(s, m)))
         except Exception as e:
             out["tools"].append({"model": m, "error": f"{type(e).__name__}: {e}"})
+    for r in out["leak"]:
+        if r.get("leaks"):
+            insights.add("models", "failure-cluster",
+                         f"{r['model']} speaks its reasoning: it ignores think=false",
+                         [f"asked for one word, got: {r['reply']!r}",
+                          "use an instruct (non-thinking) variant of this model, or another model; "
+                          "see `ollama show " + r["model"] + "` and the model's tags on ollama.com",
+                          "until then replies are long and slow (num_predict is spent on reasoning)"],
+                         source="bench", confidence="high" if r["model"] == current else "medium", data=r)
 
     cfg = ollama_ctl.config(s)
     if not night.idle and cfg["mode"] == "managed" and s.pol("bench.ollama_configs", True):

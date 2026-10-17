@@ -412,13 +412,25 @@ def cmd_status(a) -> None:
     print(f"proposals  {len(props)} waiting" + (": " + ", ".join(p["id"] for p in props) if props else ""))
     r = latest()
     print(f"report     {r or 'none yet'}")
-    ol = Ollama(s.model("llm"))
-    print(f"ollama     {'running ' + (ol.version() or '') if ol.available() else 'NOT RUNNING'}")
+    from . import jobs, lists, ollama_ctl
+    from .improve import insights
+    st = ollama_ctl.status(s)
+    print(f"ollama     {st['mode']} at {st['url']}: {'up ' + (st['iris'].get('version') or '') if st['iris']['up'] else 'not running (starts with a session or job)'}")
+    print(f"lists      {len(lists.items(statuses=('open',)))} open, {len(lists.items(statuses=('suggested',)))} suggested   (iris list)")
+    print(f"findings   {len(insights.findings())} open   (iris findings, iris dossier)")
+    j = jobs.status()
+    print(f"jobs       {'running pid ' + str(j['running']) if j['running'] else 'idle'}{', PAUSED' if j['paused'] else ''}; "
+          + " ".join(f"{k}={v}" for k, v in j["timers"].items()))
 
 
 def cmd_doctor(a) -> None:
+    from . import ollama_ctl
     from .doctor import run
-    sys.exit(0 if run(full=a.full) else 1)
+    try:
+        ok = run(full=a.full)
+    finally:
+        ollama_ctl.release()
+    sys.exit(0 if ok else 1)
 
 
 def cmd_metrics(a) -> None:

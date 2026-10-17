@@ -95,19 +95,61 @@ interrupted late, unspeakable formatting) become regression eval cases.
 - *Prompt proposals* (`improve/promptopt.py` + `improve/gate.py`): failing eval cases are shown
   to the judge model, which proposes minimal edits. Each candidate is replayed against all evals;
   it must fix at least one and break none (flips are re-checked with a second seed). The best
-  becomes a `proposal/*` branch with its evidence. Length growth is capped and cue tags must survive.
+  is recorded as a *finding* with the gate's evidence (not shipped: small-model prompt edits
+  overfit a small eval set; a Claude Code session decides). Length growth is capped and cue tags must survive.
 - *Scout* (`improve/scout.py`): PyPI versions of the packages in use, Ollama releases,
   trending Hugging Face models filtered to what fits the GPU, and benchmarks of LLMs you have
   already pulled. It never downloads by itself (`scout.allow_downloads_gb: 0`).
-- *Code briefs:* clustered failures written up for you; optionally handed to a local coding
-  agent on a branch of this repo with tests (`code_agent.command`, off by default).
-- *Escalation* (`improve/escalate.py`): a dossier (metrics, transcripts with timings,
-  ratings and judge scores, eval results, every stage's findings, last night's analysis) is
-  handed to Claude Code headless (`claude -p`, Opus) in a worktree of the code repo plus a
-  staged copy of the self store. Its self edits become one `proposal/claude-*` branch with
-  the gate run on it; its code edits become a `iris/claude-*` branch with tests run. Locked
-  paths are refused. It works on the setup (how the agent converses), not on model knowledge,
-  so its improvements carry over when the LLM is swapped.
+- *Bench* (`improve/bench.py`): a fixed prompt per installed model and context size (cold load,
+  time to first token, prompt processing, tokens/s, VRAM), tool-choice accuracy on
+  `evals/tools.yaml` (tools are not executed), and, at night, the same measurement on throwaway
+  Ollama instances with other server settings (flash attention, q8_0 KV cache). Rows go to
+  `state/bench.jsonl`; anything worth acting on becomes a finding.
+- *Findings* (`improve/insights.py`): metrics past their targets, regressions since the last run,
+  errors, failing-eval clusters, slow or failing tools, the biggest stage of first-audio latency.
+  Deduplicated by fingerprint: a recurring problem's count goes up, so it ranks higher.
+- *Suggest:* the judge model's own improvement ideas, stored as low-confidence `local-model`
+  findings (hints, not instructions: weak reflectors diagnose poorly).
+
+## The improvement handoff (local data -> Claude Code -> code)
+
+The local loops measure; they don't engineer. A human-started Claude Code session on this repo
+does the engineering:
+
+1. During use: your lists (`iris list`, or say "add X to my feature list"), ratings, the
+   after-session reflection (requests as *suggested* list items, capability gaps as findings).
+2. Background (after sessions, idle, nightly): metrics, judge scores, evals, benchmarks, findings.
+3. `iris dossier` writes `.iris/dossier/` (lists, findings, summary, bench, evals, conversations,
+   done). `/improve` in Claude Code (`.claude/commands/improve.md`) reads it plus
+   `docs/ROADMAP.md`, implements the most valuable items on a branch with tests, and closes them
+   (`iris list done`, `iris findings done`).
+
+Nothing is sent anywhere by IRIS itself.
+
+## IRIS's own Ollama
+
+`iris/ollama_ctl.py` starts a private `ollama serve` on 127.0.0.1:11435 when a session or job
+needs it and stops it afterwards (`iris off` too). It reads the system's model store read-only
+(`OLLAMA_NOPRUNE=1`), so nothing is duplicated, while its server env (flash attention, KV cache
+type, keep-alive, ...) and per-model request profiles live in the self store
+(`pods/brain/ollama.yaml`). The loops never edit that file; `iris ollama set/profile` (you or
+Claude Code) do, as commits you can roll back. `mode: external` uses `$OLLAMA_HOST` instead.
+
+## Background jobs
+
+`iris/jobs.py`: nightly (`iris-night.timer`), idle (`iris-idle.timer`, every 30 min, only after
+10 quiet minutes, 15 min budget) and after each session (the sleep reflection). A job holds the
+`night` lock; `iris talk` sends it SIGUSR1 and it stops at the next check, saving what it has.
+`iris jobs pause|resume|stop`, `iris off`. Timers are installed only by `iris jobs enable`.
+
+## Web UI
+
+`iris talk --ui` serves `iris/web/static/` from a stdlib HTTP server on 127.0.0.1 (token in the
+URL, Host/Origin checked). The session publishes events on `Session.bus` (`iris/events.py`:
+non-blocking, bounded per subscriber): state + mic/output levels (30 Hz, only on change), user
+text, sanitized reply chunks, the chunk being played, tool calls, interruptions, finished turn
+records (latency breakdown). The page sends commands to `Session.command`. The face is an ASCII
+glyph grid on a canvas (neural field + eyes + oscilloscope mouth), 30 fps cap, paused when hidden.
 - *Varied voice texts:* the round-trip texts are grouped (short, conversational, questions,
   numbers, emotion, technical, long) and interleaved with a nightly rotation, so the clips you
   rate cover every kind of speech. Rule tuning uses only the numbers group (it's what rules touch).
@@ -117,7 +159,8 @@ interrupted late, unspeakable formatting) become regression eval cases.
 - Locked paths (`policy.yaml`, `agent.yaml`, `evals/golden/`) are refused at commit time.
 - The gate's evaluator is not editable by the loops, so they can't grade their own homework.
 - Auto changes are small, bounded steps with an automatic revert; one experiment per knob at a time.
-- Approve-tier changes never touch `main` until you merge them.
+- Approve-tier changes never touch `main` until you merge them; the loops record findings
+  instead of changing persona, models, Ollama settings or code.
 - Memory is only written from your own conversations, never from web content.
 - A live session holds a lock; the night loop waits for it rather than fighting over the GPU.
 
@@ -150,8 +193,8 @@ while IRIS talks; in headset mode it stays open with `vad.barge_in_db` extra thr
 talking over IRIS interrupts her. Whisper gets the last reply plus names from the
 conversation as its prompt (`stt.context`), and a transcript that merely echoes that hint is
 discarded. A reply cut by `llm.num_predict` ends on its last full sentence and offers to go on.
-Feature requests the reflection hears ("stop when I say stop") go to `iris requests` and the
-report, not into `user.md`.
+Feature requests the reflection hears ("stop when I say stop") go to your improvements list as
+*suggested* items (`iris list`), not into `user.md`.
 
 ## Tools, wake word, live voice
 

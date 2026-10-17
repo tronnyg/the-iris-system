@@ -61,6 +61,7 @@
       const n = this.cols * this.rows;
       this.I = new Float32Array(n); this.C = new Uint16Array(n); this.K = new Uint8Array(n);
       this.buildNet();
+      this.draw();                                  // resizing clears the canvas: repaint now
     }
 
     // -- the network -------------------------------------------------------------------
@@ -99,7 +100,7 @@
       this.pulses = [];
     }
 
-    R() { return Math.min(this.W * 0.115, this.H * 0.16); }
+    R() { return Math.min(this.W * 0.14, this.H * 0.19); }
 
     // -- buffer helpers ----------------------------------------------------------------
     clear() { this.I.fill(0); }
@@ -115,8 +116,7 @@
       const sl = Math.abs(dy / this.ch) / (Math.abs(dx / this.cw) + 1e-6);
       const g = sl > 2.2 ? "|" : sl < 0.45 ? "-" : (dx * dy > 0 ? "\\" : "/");
       for (let s = 1; s < steps; s++) {
-        if (s % 2 === 0 && v < 0.3) continue;      // sparse dotted feel for quiet edges
-        this.plot(x0 + dx * s / steps, y0 + dy * s / steps, v < 0.3 ? "·" : g, v, k);
+        this.plot(x0 + dx * s / steps, y0 + dy * s / steps, v < 0.34 ? "·" : g, v, k);
       }
     }
 
@@ -214,7 +214,7 @@
         [m.x + Math.sin(t * 0.21 + m.ph) * this.cw * 1.4, m.y + Math.cos(t * 0.17 + m.ph * 1.3) * this.ch * 0.6]);
       // edges
       this.edges.forEach(([a, b]) => {
-        const v = (0.13 + 0.25 * Math.max(N[a].act, N[b].act)) * live;
+        const v = (0.2 + 0.3 * Math.max(N[a].act, N[b].act)) * live;
         this.line(pos[a][0], pos[a][1], pos[b][0], pos[b][1], v, K_NET);
       });
       // pulses: a bright head with a short tail
@@ -239,11 +239,11 @@
         const seg = Math.floor(((a % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2) / (Math.PI / 2) * 12);
         if (seg > 9) continue;                                     // four gaps, like a HUD reticle
         const major = i % Math.max(4, Math.round(ticks / 24)) === 0;
-        this.plot(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr * 0.92, major ? "+" : "·", (major ? 0.45 : 0.22) * live, K_STATE);
+        this.plot(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr * 0.92, major ? "+" : "·", (major ? 0.55 : 0.32) * live, K_STATE);
       }
 
       // eyes
-      const ex = R * 0.95, ey = -R * 0.28, er = R * 0.5;
+      const ex = R * 0.92, ey = -R * 0.3, er = R * 0.6;
       [-1, 1].forEach((side) => this.eye(cx + side * ex, cy + ey, er, side, live));
 
       // mouth
@@ -253,7 +253,7 @@
 
     eye(x, y, r, side, live) {
       const open = clamp(this.open, 0, 1.2), st = this.state;
-      const ry = r * 0.62 * open, rx = r;
+      const ry = r * 0.78 * open, rx = r;
       if (open < 0.22) {                                          // closed / mid-blink: one lid line
         for (let px = -rx; px <= rx; px += this.cw) {
           this.plot(x + px, y + (st === "asleep" ? Math.abs(px) / rx * this.ch * 0.35 : 0), st === "asleep" ? "‿" : "─", 0.75 * live, K_STATE);

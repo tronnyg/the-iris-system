@@ -29,18 +29,18 @@ b { color: var(--accent); font-weight: 700; letter-spacing: .25em; }
   gap: 10px;
   padding: 10px;
   grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.35fr) minmax(280px, 1fr);
-  grid-template-rows: 34px minmax(0, 1fr) minmax(190px, 30vh);
+  grid-template-rows: 34px minmax(0, 1fr) minmax(170px, 25vh);
   grid-template-areas: "bar bar bar" "log core tel" "deck deck deck";
 }
-.bar { grid-area: bar; display: flex; align-items: center; gap: 16px; padding: 0 10px;
+.topbar { grid-area: bar; display: flex; align-items: center; gap: 16px; padding: 0 10px;
        border: 1px solid var(--bg2); background: #1d2021e6; }
-.bar .brand { white-space: nowrap; }
-.bar .glyph { color: var(--accent); }
-.bar .chips { display: flex; gap: 6px; flex: 1; overflow: hidden; }
+.topbar .brand { white-space: nowrap; }
+.topbar .glyph { color: var(--accent); }
+.topbar .chips { display: flex; gap: 6px; flex: 1; overflow: hidden; }
 .chip { border: 1px solid var(--bg3); padding: 0 6px; color: var(--fg4); white-space: nowrap; font-size: 12px; }
 .chip.on { border-color: var(--aqua-d); color: var(--aqua); }
 .chip.warn { border-color: var(--yellow-d); color: var(--yellow); }
-.bar .right { white-space: nowrap; }
+.topbar .right { white-space: nowrap; }
 .conn.on { color: var(--green); } .conn.off { color: var(--red); }
 
 .panel {
@@ -110,8 +110,8 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .legend { font-size: 11px; color: var(--gray); margin-bottom: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .legend i { display: inline-block; width: 8px; height: 8px; margin-right: 3px; }
 .vitals { font-size: 12px; margin-bottom: 10px; }
-.vitals .v { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
-.vitals .v .bar { color: var(--aqua-d); letter-spacing: -1px; }
+.vitals .v { display: grid; grid-template-columns: 1fr auto; gap: 6px; line-height: 1.6; }
+.vitals .v .meter-txt { color: var(--aqua-d); letter-spacing: -1px; }
 .vitals .v.bad .val { color: var(--red); } .vitals .v.good .val { color: var(--green); }
 .kv { font-size: 12px; display: grid; grid-template-columns: max-content 1fr; gap: 1px 10px; }
 .kv .k { color: var(--gray); } .kv .v { color: var(--fg2); word-break: break-word; }
@@ -150,7 +150,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   #app { height: auto; min-height: 100vh; grid-template-columns: minmax(0, 1fr);
          grid-template-rows: auto 52vh minmax(320px, 60vh) auto minmax(260px, auto);
          grid-template-areas: "bar" "core" "log" "tel" "deck"; padding: 8px 16px; }
-  .bar { flex-wrap: wrap; height: auto; padding: 4px 8px; }
+  .topbar { flex-wrap: wrap; height: auto; padding: 4px 8px; }
   .cols3 { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }

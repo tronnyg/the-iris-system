@@ -5,7 +5,7 @@
 #   ./setup.sh --tts kokoro       only one voice engine (kokoro | chatterbox | both)
 #   ./setup.sh --skip-models      create environments but download no models
 #   ./setup.sh --upgrade <venv>   upgrade packages in one venv (core | kokoro | chatterbox)
-#   ./setup.sh --timer            install the nightly improvement run (systemd user timer, 03:00)
+#   ./setup.sh --timer            install the background learning timers (same as `iris jobs enable`)
 #
 # Order is "small and essential first" so that, on a slow connection, you can already talk
 # to the assistant while the big downloads (judge model, Chatterbox, big Whisper) continue.
@@ -191,12 +191,9 @@ if [[ $SKIP_MODELS == 0 ]]; then
 fi
 
 if [[ $TIMER == 1 ]]; then
-  say "Installing the nightly improvement timer (03:00)"
-  mkdir -p "$HOME/.config/systemd/user"
-  sed "s#@IRIS@#$IRIS#g" scripts/systemd/iris-night.service > "$HOME/.config/systemd/user/iris-night.service"
-  cp scripts/systemd/iris-night.timer "$HOME/.config/systemd/user/iris-night.timer"
-  systemctl --user daemon-reload && systemctl --user enable --now iris-night.timer && \
-    systemctl --user list-timers iris-night.timer | tee -a "$LOG"
+  say "Installing the background learning timers (nightly 03:00 + idle-time)"
+  "$IRIS" jobs enable | tee -a "$LOG"
+  systemctl --user list-timers 'iris-*' | tee -a "$LOG"
 fi
 
 say "Checking everything"

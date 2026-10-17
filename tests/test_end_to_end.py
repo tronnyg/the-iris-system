@@ -148,3 +148,21 @@ def test_cli_talk_web_ui(ollama, iris_home):
     assert turns and turns[0]["feedback"] == "good" and "Tokyo" in turns[0]["reply_spoken"]
     from iris import lists
     assert {"a timer tool", "dark mode"} <= {r["text"] for r in lists.items("features")}
+
+
+def test_bench_measures_and_records(ollama, iris_home):
+    """The bench stage measures latency, tool choice and reasoning leaks; it changes nothing."""
+    from iris.config import Settings
+    from iris.improve.night import Night
+    from iris.util import read_jsonl
+    from iris import paths
+    before = (Settings.load().root / "pods/voice/pod.yaml").read_text()
+    r = Night(only={"bench"}, skip={"report"}).run()
+    b = r["stages"]["bench"]
+    assert b["status"] == "ok", b
+    res = b["result"]
+    assert res["llm"] and res["llm"][0]["warm"]["ttft_s"] is not None, res["llm"]
+    assert res["tools"][0]["cases"] >= 5 and "leak" in res
+    kinds = {row["kind"] for row in read_jsonl(paths.state_dir() / "bench.jsonl")}
+    assert {"llm", "tools", "leak"} <= kinds
+    assert (Settings.load().root / "pods/voice/pod.yaml").read_text() == before

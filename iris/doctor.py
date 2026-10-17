@@ -79,8 +79,19 @@ def run(full: bool = False) -> bool:
             good = False
             _line(BAD, f"python module {mod}: {e}", hint)
 
-    # Ollama + GPU
+    # Ollama + GPU (IRIS's own instance, see ollama_ctl)
+    from . import ollama_ctl
     from .llm import Ollama
+    url = ollama_ctl.ensure(s)
+    st = ollama_ctl.status(s)
+    if st["mode"] == "managed" and url == st["url"]:
+        _line(OK, f"IRIS's own Ollama at {url} (settings in self store {ollama_ctl.REL}; other apps unaffected)")
+    elif st["mode"] == "managed":
+        _line(WARN, f"IRIS's own Ollama could not start; using {url}", f"see {paths.logs_dir() / 'ollama-iris.log'}")
+    if st["system"]["url"] != url:
+        for m in st["system"].get("loaded") or []:
+            _line(WARN, f"the system Ollama holds {m['name']} ({m['vram_mb']} MB VRAM) that IRIS can't use",
+                  "it unloads after its keep-alive; or: ollama stop " + str(m["name"]))
     ol = Ollama(s.model("llm", "qwen3:4b"))
     if not ol.available():
         good = False
@@ -110,6 +121,11 @@ def run(full: bool = False) -> bool:
                               "check `journalctl -u ollama | grep -i cuda`")
                     else:
                         _line(OK, f"{ol.model} loaded {pct:.0f}% on GPU, first reply in {time.time() - t0:.1f}s")
+                from .improve.bench import reasoning_leak
+                leak = reasoning_leak(ol.model)
+                if leak["leaks"]:
+                    _line(WARN, f"{ol.model} writes out its reasoning even with thinking off (IRIS would speak it)",
+                          "switch to an instruct / non-thinking model: iris set model llm <model>")
             except Exception as e:
                 good = False
                 _line(BAD, f"LLM test failed: {e}")
