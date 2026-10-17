@@ -59,7 +59,7 @@ While talking:
 |---|---|
 | Enter (empty line) | start / stop recording (push-to-talk); interrupts if it's speaking |
 | type a message + Enter | typed message instead of speech |
-| say "good answer" / "bad answer", or type `+` / `-` | rate the last reply (the strongest learning signal) |
+| say "good answer" / "bad answer" (optionally followed by why: "bad answer, too long"), or type `+` / `-` | rate the last reply (the strongest learning signal) |
 | say "remember that ..." / "forget that ..." | memory, written immediately |
 | `/vad` / `/ptt` | hands-free mode / back to push-to-talk |
 | `/q` | quit; a short reflection runs and updates memory |

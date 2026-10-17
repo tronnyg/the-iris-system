@@ -27,6 +27,22 @@ from .util import log
 
 GOOD_RE = re.compile(r"^\s*(good|great|nice|perfect|excellent)\s+(answer|job|one|reply|response)\W*$", re.I)
 BAD_RE = re.compile(r"^\s*((bad|wrong|terrible|poor)\s+(answer|reply|response)|that was (bad|wrong|terrible|not helpful))\W*$", re.I)
+# "good response, you explained it clearly": a rating with the reason spoken after it
+WHY_RE = re.compile(r"^\s*(?:(?P<good>good|great|nice|perfect|excellent)|(?P<bad>bad|wrong|terrible|poor))\s+"
+                    r"(?:answer|reply|response)\b[\s,.;:!-]+(?P<why>\w.*)$", re.I | re.S)
+
+
+def parse_feedback(text: str) -> tuple[str, str | None] | None:
+    """(rating, reason or None) if `text` rates the last reply, else None.
+
+    Anything with a question in it is a normal turn ("good answer, but why is the sky blue?")."""
+    fb = feedback_command(text)
+    if fb:
+        return fb, None
+    m = WHY_RE.match(text)
+    if not m or "?" in text:
+        return None
+    return ("good" if m.group("good") else "bad"), m.group("why").strip().rstrip(".!")
 
 
 def feedback_command(text: str) -> str | None:
@@ -73,6 +89,7 @@ class Conversation:
         self.on_first_audio_queued = on_first_audio_queued or (lambda: None)
         self.commit_memory = commit_memory
         self.history: list[dict] = []
+        self.ctx_start = 0               # first history message still sent to the LLM
         self.turn_no = 0
         self.live: _Live | None = None
         self.lock = threading.Lock()
@@ -85,22 +102,37 @@ class Conversation:
     def busy(self) -> bool:
         return self.live is not None
 
-    def interrupt(self, reason: str = "barge_in") -> None:
+    def interrupt(self, reason: str = "barge_in") -> bool:
+        """Cancel the reply in progress. False if there was none."""
         live = self.live
         if live is None:
-            return
+            return False
         live.reason = reason
         live.interrupted_at = time.perf_counter()
         live.cancel.set()
         if self.player is not None:
             self.player.flush()
+        return True
+
+    def context(self, max_turns: int) -> list[dict]:
+        """The history sent to the LLM: at most `max_turns` exchanges, trimmed in blocks.
+
+        A window that slides by one exchange per reply changes the start of the prompt
+        every turn, so Ollama can't reuse its cache and re-reads the whole conversation
+        (seconds on this GPU) before every reply. Once the window is full, the older half
+        is dropped at once; the prefix then stays the same for the next max_turns/2 replies.
+        """
+        if len(self.history) - self.ctx_start > 2 * max_turns:
+            self.ctx_start = len(self.history) - 2 * max(1, (max_turns + 1) // 2)
+        return self.history[self.ctx_start:]
 
     # -- commands -----------------------------------------------------------------------
     def handle_command(self, text: str) -> str | None:
         """Feedback and memory commands. Returns a short spoken acknowledgement or None."""
-        fb = feedback_command(text)
-        if fb and self.turn_no > 0:
-            self.writer.feedback(self.turn_no, fb)
+        parsed = parse_feedback(text)
+        if parsed and self.turn_no > 0:
+            fb, note = parsed
+            self.writer.feedback(self.turn_no, fb, note=note)
             return "Noted. I'll learn from that." if fb == "bad" else "Noted."
         fact = remember_command(text)
         if fact:
@@ -140,7 +172,7 @@ class Conversation:
 
         s = self.s
         history_turns = int(s.knob("llm.history_turns", 12))
-        messages = self.memory.build_messages(s.system_prompt, self.history[-2 * history_turns:], user_text)
+        messages = self.memory.build_messages(s.system_prompt, self.context(history_turns), user_text)
         options = {
             "temperature": float(s.knob("llm.temperature", 0.7)),
             "num_predict": int(s.knob("llm.num_predict", 220)),

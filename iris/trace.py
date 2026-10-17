@@ -58,8 +58,9 @@ class TraceWriter:
         append_jsonl(self.path, rec)
         return rec
 
-    def feedback(self, turn: int, value: str, source: str = "voice") -> dict:
-        return self.event("feedback", turn=turn, value=value, source=source)
+    def feedback(self, turn: int, value: str, source: str = "voice", note: str | None = None) -> dict:
+        extra = {"note": note} if note else {}
+        return self.event("feedback", turn=turn, value=value, source=source, **extra)
 
     def save_audio(self, audio: np.ndarray, turn: int, sr: int = 16000) -> str | None:
         try:
@@ -95,7 +96,7 @@ def turns(days: int = 1, end: str | None = None, since_ts: float | None = None,
           session: str | None = None) -> list[dict]:
     """Turn records with feedback events folded in."""
     recs = list(records(days, end, since_ts))
-    fb = {(r["session"], r["turn"]): r["value"] for r in recs if r.get("type") == "feedback"}
+    fb = {(r["session"], r["turn"]): r for r in recs if r.get("type") == "feedback"}
     out = []
     for r in recs:
         if r.get("type") != "turn":
@@ -103,7 +104,10 @@ def turns(days: int = 1, end: str | None = None, since_ts: float | None = None,
         if session and r.get("session") != session:
             continue
         r = dict(r)
-        r["feedback"] = fb.get((r["session"], r.get("turn")), r.get("feedback"))
+        f = fb.get((r["session"], r.get("turn")))
+        r["feedback"] = f["value"] if f else r.get("feedback")
+        if f and f.get("note"):
+            r["feedback_note"] = f["note"]
         out.append(r)
     return out
 

@@ -7,7 +7,7 @@ from iris import trace
 from iris.audio import FakeClockPlayer
 from iris.config import Settings
 from iris.memory import Memory
-from iris.pipeline import Conversation, feedback_command
+from iris.pipeline import Conversation, feedback_command, parse_feedback
 from iris.trace import TraceWriter
 from iris.tts.client import LocalTTS, ToneEngine
 
@@ -78,6 +78,19 @@ def test_feedback_and_memory_commands(fake_llm):
     assert feedback_command("what's a good answer to this riddle") is None
 
 
+def test_spoken_rating_with_a_reason(fake_llm):
+    conv, texts, player = make_conv(fake_llm, "Objects bundle data and behaviour.", speak=False)
+    conv.respond("explain object-oriented programming")
+    r = conv.respond("good response you explained it clearly and correctly pronounced.")
+    assert r.spoken == "Noted." and conv.turn_no == 1
+    t = trace.turns()[0]
+    assert t["feedback"] == "good" and t["feedback_note"] == "you explained it clearly and correctly pronounced"
+    assert parse_feedback("Bad answer, too long.") == ("bad", "too long")
+    assert parse_feedback("good answer") == ("good", None)
+    assert parse_feedback("Good answer, but why is the sky blue?") is None
+    assert parse_feedback("good responses are hard to write") is None
+
+
 def test_resume_cancellation_leaves_no_history(fake_llm):
     conv, texts, player = make_conv(fake_llm, "Answer. " * 50, speedup=0.5)
     out = {}
@@ -89,6 +102,22 @@ def test_resume_cancellation_leaves_no_history(fake_llm):
     assert out["r"].cancelled == "resume"
     assert conv.history == []
     player.stop()
+
+
+def test_history_is_trimmed_in_blocks_so_the_prompt_prefix_stays_cacheable(fake_llm):
+    conv, texts, player = make_conv(fake_llm, "Sure.", speak=False)
+    conv.s.overrides["llm.history_turns"] = 4
+    firsts = []
+    for i in range(12):
+        conv.respond(f"question {i}")
+        msgs = conv.llm.calls[-1]["messages"]
+        hist = [m for m in msgs[1:-1] if m["role"] != "system"]
+        assert len(hist) <= 2 * 4
+        firsts.append(hist[0]["content"] if hist else None)
+    # the oldest message sent changes only when a block is dropped, not on every turn
+    changes = sum(1 for a, b in zip(firsts, firsts[1:]) if a != b)
+    assert changes <= 4, firsts
+    assert msgs[-1]["content"] == "question 11" and len(conv.history) == 24
 
 
 def test_tone_engine_produces_audio():

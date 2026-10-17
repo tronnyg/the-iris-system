@@ -49,7 +49,9 @@ Recorder (PTT or energy VAD, 16 kHz) -> Utterance
 ```
 
 - **Barge-in:** push-to-talk while it speaks cancels the LLM stream (HTTP closed), drops the TTS queue and flushes playback. History keeps only what was actually heard, marked with "...".
-- **Premature end-of-speech (hands-free):** if you resume talking within `vad.resume_window_ms` before the reply is audible, the reply is abandoned, the two utterances are merged, and the event is counted. That count drives the silence-timeout tuning.
+- **Premature end-of-speech (hands-free):** if you resume talking before the reply is audible, the reply is abandoned, the two utterances are merged (however long the pause: an abandoned question is never dropped), and the event is counted. That count drives the silence-timeout tuning. `vad.resume_window_ms` additionally merges speech that resumes that quickly even before a reply has started.
+- **Fillers:** an utterance that is only hesitation sounds ("um", "mm", "oh") is logged with `filler: true` and not answered; IRIS keeps listening.
+- **History** is trimmed in blocks (the older half at once, once `llm.history_turns` is exceeded) so the prompt prefix stays the same for several turns and Ollama can reuse its cache.
 - **Echo:** half-duplex; the mic is ignored while speaking in hands-free mode.
 - **Prompt caching:** facts and lessons only change between sessions, and recalled episodes are inserted *after* the history, so Ollama can reuse the cached prefix.
 - **Persona cues:** the LLM may write `[pause] [dry] [laugh] ...`; each engine renders what it can (Kokoro: pauses and speed per tone; Chatterbox turbo: native laugh/sigh tags) and drops the rest.

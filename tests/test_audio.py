@@ -50,6 +50,30 @@ def test_recorder_merges_after_premature_end():
     assert len(got[1].audio) > len(got[0].audio)
 
 
+def test_recorder_carries_abandoned_utterance_over_a_long_pause():
+    got = []
+    rec = Recorder(got.append, mode="vad", vad=VADConfig(silence_ms=300, min_speech_ms=100), resume_window_ms=1000)
+    rec.on_speech_start = lambda: len(got) == 1 and rec.carry_over()   # reply abandoned as speech starts
+    for f in frames(np.concatenate([noise(0.6), tone(0.8), noise(0.4, seed=5)])):
+        rec.feed(f)
+    rec.allow_merge = False                      # as if the pause outlasted the resume window
+    for f in frames(np.concatenate([tone(0.3), noise(0.5, seed=6)])):
+        rec.feed(f)
+    assert len(got) == 2 and got[1].merged_after_resume
+    assert len(got[1].audio) > len(got[0].audio)
+    for f in frames(np.concatenate([noise(3.0, seed=8), tone(0.5), noise(0.5, seed=9)])):
+        rec.feed(f)                              # carry-over is one-shot
+    assert len(got) == 3 and not got[2].merged_after_resume
+
+
+def test_filler_only_utterances():
+    from iris.stt import is_filler
+    for t in ("Um.", "Mm.", "Oh.", "Ah, ah, ah.", "Um, uh,", "Hmm..."):
+        assert is_filler(t), t
+    for t in ("Mm-hmm.", "Mm hmm.", "Mhm.", "Uh-huh.", "Yeah.", "No.", "Okay.", "Oh, what time is it?", "", "..."):
+        assert not is_filler(t), t
+
+
 def test_ptt_records_between_down_and_up():
     got = []
     rec = Recorder(got.append, mode="ptt")

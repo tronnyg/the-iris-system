@@ -42,7 +42,7 @@ def _transcript(turns: list[dict]) -> str:
         if t.get("barge_in"):
             flags.append("user interrupted")
         if t.get("feedback"):
-            flags.append(f"user rated {t['feedback']}")
+            flags.append(f"user rated {t['feedback']}" + (f": {t['feedback_note']}" if t.get("feedback_note") else ""))
         tag = f"  [{', '.join(flags)}]" if flags else ""
         lines.append(f"User: {t.get('user_text', '')}")
         lines.append(f"Assistant: {t.get('reply_spoken', '')}{tag}")
@@ -82,7 +82,7 @@ def harvest(turns: list[dict], settings: Settings) -> list[dict]:
         key = (t.get("session"), t.get("turn"))
         reasons = []
         if t.get("feedback") == "bad":
-            reasons.append("the user rated it bad")
+            reasons.append("the user rated it bad" + (f": {t['feedback_note']}" if t.get("feedback_note") else ""))
         if key in flags:
             reasons.append({"clarify": "the user had to ask 'what?'", "correction": "the user corrected it",
                             "repeat": "the user had to repeat themselves"}[flags[key]])

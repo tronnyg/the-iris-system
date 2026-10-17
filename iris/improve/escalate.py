@@ -86,7 +86,7 @@ def _fmt_turn(t: dict) -> str:
     tm = t.get("timing") or {}
     flags = []
     if t.get("feedback"):
-        flags.append(f"rated {t['feedback']}")
+        flags.append(f"rated {t['feedback']}" + (f" (\"{t['feedback_note']}\")" if t.get("feedback_note") else ""))
     if t.get("barge_in"):
         flags.append(f"interrupted at {round((t['barge_in'] or {}).get('fraction') or 0, 2)} of reply")
     if t.get("cancelled"):

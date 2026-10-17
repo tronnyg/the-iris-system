@@ -28,7 +28,7 @@ from .config import Settings
 from .llm import Ollama
 from .memory import Memory
 from .pipeline import Conversation
-from .stt import STT
+from .stt import STT, is_filler
 from .trace import TraceWriter
 from .tts.client import engine_load_options, make_tts, synth_opts
 from .util import log
@@ -113,13 +113,15 @@ class Session:
         if self.mode == "vad" and self.ui is None:
             print("  ● hearing you...", flush=True)
         # In VAD mode: if the user starts speaking again before the reply plays, the
-        # previous end-of-speech was premature. Abandon that reply; the merged utterance follows.
+        # previous end-of-speech was premature. Abandon that reply; the merged utterance follows,
+        # however long the user paused, so the abandoned question is never dropped.
         conv = self.conv
         if conv and conv.busy() and self.player and self.player.stats.t_first_audio is None:
-            conv.interrupt("resume")
+            if conv.interrupt("resume") and self.recorder is not None:
+                self.recorder.carry_over()
 
     def _on_utterance(self, utt: Utterance) -> None:
-        if utt.speech_ms < 200 or len(utt.audio) < 3200:
+        if not utt.merged_after_resume and (utt.speech_ms < 200 or len(utt.audio) < 3200):
             return
         if self.recorder is not None and self.mode == "vad":
             self.recorder.allow_merge = True
@@ -170,6 +172,14 @@ class Session:
             else:
                 print(f"  (heard nothing useful: {why}, loudest {peak:.0f} dB, "
                       f"no-speech {tr.no_speech_prob if tr.no_speech_prob is not None else '?'}){hint}", flush=True)
+            return
+        if is_filler(tr.text):           # "Um." / "Mm." alone: the user is thinking, keep listening
+            self.writer.turn({"turn": None, "mode": utt.method, "audio_in": audio_rel, "user_text": tr.text,
+                              "stt": tr.as_dict(), "endpoint": endpoint, "filler": True})
+            if self.ui:
+                self.ui.note(f"({tr.text.strip()} ... listening)")
+            else:
+                print(f"  (heard \"{tr.text.strip()}\": listening on)", flush=True)
             return
         if self.ui:
             self.ui.user_said(tr.text)
