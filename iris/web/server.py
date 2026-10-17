@@ -30,7 +30,7 @@ from ..util import log
 STATIC = Path(__file__).with_name("static")
 DEFAULT_PORT = 7770
 _STATIC_FILES = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css",
-                 "/face.js": "face.js"}
+                 "/core.js": "core.js"}
 
 
 def gpu_stats() -> dict | None:

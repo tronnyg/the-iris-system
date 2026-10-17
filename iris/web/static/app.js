@@ -5,7 +5,7 @@
   const qs = new URLSearchParams(location.search);
   const TOKEN = qs.get("token") || "";
   const DEMO = qs.get("demo") === "1";
-  const face = new window.IrisFace($("#face"));
+  const core = new window.IrisCore($("#core"));
   const S = { info: {}, targets: {}, turns: [], cur: null, tokens: 0, lastTurn: 0, state: "booting", ended: false };
 
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -65,6 +65,14 @@
     return S.cur;
   }
   function closeIris() { if (S.cur) S.cur.done = true; }
+  let capT = null;
+  function caption(text, you) {
+    const c = $("#caption");
+    c.textContent = you ? `› ${text}` : text;
+    c.className = `caption on${you ? " you" : ""}`;
+    clearTimeout(capT);
+    capT = setTimeout(() => { c.className = "caption"; }, you ? 4000 : 6000);
+  }
   function onSay(text) {
     const e = irisEntry();
     const span = document.createElement("span");
@@ -78,6 +86,7 @@
     if (!e) return;
     const c = e.chunks.find((x) => !x.spoken && x.text.trim() === String(text).trim()) || e.chunks.find((x) => !x.spoken);
     if (c) { c.spoken = true; c.span.className = "spoken"; }
+    caption(String(text));
   }
   function sysline(text) {
     stick(() => {
@@ -269,11 +278,24 @@
   });
   const talk = () => (DEMO ? null : cmd({ cmd: "ptt", action: "toggle" }));
   $("#ptt").addEventListener("click", talk);
-  $("#face").addEventListener("click", talk);
+  // full screen: only the core (and live captions) stay; Esc or f leaves
+  function solo(on) {
+    on = on ?? !document.body.classList.contains("solo");
+    document.body.classList.toggle("solo", on);
+    try {
+      if (on && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+      if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    } catch (e) { /* the CSS mode works without the Fullscreen API */ }
+  }
+  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) document.body.classList.remove("solo"); });
+  $("#solo").addEventListener("click", () => solo());
+  $("#core").addEventListener("dblclick", () => solo());
   document.addEventListener("keydown", (ev) => {
     const typing = ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName);
     if (typing) { if (ev.key === "Escape") document.activeElement.blur(); return; }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (ev.key === "f") { solo(); return; }
+    if (ev.key === "Escape" && document.body.classList.contains("solo")) { solo(false); return; }
     if (ev.key === " " || ev.key === "Enter") { ev.preventDefault(); talk(); }
     else if (ev.key === "t") { ev.preventDefault(); $("#text").focus(); }
     else if (ev.key === "m") cmd({ cmd: "mode" });
@@ -288,25 +310,20 @@
   function setState(s, mic, out) {
     if (s !== S.state) {
       S.state = s;
-      const el = $("#state");
-      el.textContent = `‹ ${LABEL[s] || s.toUpperCase()} ›`;
-      el.className = `state ${s}`;
-      if (s !== "thinking") S.tokens = 0;
-      $("#tok").textContent = "";
+      document.title = `IRIS · ${LABEL[s] || s}`;
+      if (s !== "thinking") { S.tokens = 0; core.sub = ""; }
     }
-    face.setState(s);
-    face.setLevels(mic, out);
-    $("#mic-m").textContent = bar(mic || 0);
-    $("#out-m").textContent = bar(out || 0);
+    core.setState(s);
+    core.setLevels(mic, out);
   }
   function onEvent(e) {
     switch (e.type) {
       case "hello": $("#conn").className = "conn on"; $("#conn").textContent = "● live"; break;
       case "state": setState(e.state, e.mic, e.out); break;
-      case "user": addYou(e.text); break;
+      case "user": addYou(e.text); caption(e.text, true); break;
       case "say": onSay(e.text); break;
       case "spoken": onSpoken(e.text); break;
-      case "delta": S.tokens += 1; $("#tok").textContent = `${S.tokens} tokens`; break;
+      case "delta": S.tokens += 1; core.sub = `${S.tokens} TOKENS`; break;
       case "turn": onTurn(e); refreshSoon(); break;
       case "note": sysline(e.text); break;
       case "tool": sysline(e.label + " …"); break;
@@ -337,7 +354,7 @@
     setTimeout(() => {
       const words = ["Here's", "a", "short", "spoken", "reply,", "so", "you", "can", "see", "the", "mouth", "move."];
       setState("speaking", 0, 0.5);
-      words.forEach((w, i) => setTimeout(() => { onSay(w); onSpoken(w); face.setLevels(0, 0.3 + Math.random() * 0.6); }, i * 220));
+      words.forEach((w, i) => setTimeout(() => { onSay(w); onSpoken(w); core.setLevels(0, 0.3 + Math.random() * 0.6); }, i * 220));
       setTimeout(() => {
         onTurn({ turn: (S.lastTurn || 0) + 1, timing: { stt_done: 0.32, first_token: 0.71, first_chunk: 0.95, first_chunk_synth: 1.12, first_audio: 1.18 }, llm: { tok_s: 31 }, words: words.length });
         setState("idle", 0, 0);
@@ -359,19 +376,19 @@
     const next = () => {
       const [s, ms] = seq[i++ % seq.length];
       setState(s, 0, 0);
-      if (s === "hearing") addYou("what's the weather like on Mars today?");
+      if (s === "hearing") { addYou("what's the weather like on Mars today?"); caption("what's the weather like on Mars today?", true); }
       if (s === "speaking") { ["Cold.", "About minus sixty,", "with dust in the afternoon."].forEach((w, k) => setTimeout(() => { onSay(w); onSpoken(w); }, k * 900)); }
       if (s === "idle" && i > 4) onTurn({ turn: (S.lastTurn || 0) + 1, timing: { stt_done: 0.3, first_token: 0.8, first_chunk: 1.0, first_chunk_synth: 1.2, first_audio: 1.25 }, llm: { tok_s: 33 }, words: 9 });
       setTimeout(next, ms);
     };
     next();
     setInterval(() => {
-      if (S.state === "speaking") face.setLevels(0, 0.25 + Math.abs(Math.sin(Date.now() / 140)) * 0.6);
-      else if (S.state === "hearing") face.setLevels(0.2 + Math.random() * 0.5, 0);
-      $("#mic-m").textContent = bar(face.mic); $("#out-m").textContent = bar(face.out);
+      if (S.state === "speaking") core.setLevels(0, 0.25 + Math.abs(Math.sin(Date.now() / 140)) * 0.6);
+      else if (S.state === "hearing") core.setLevels(0.2 + Math.random() * 0.5, 0);
     }, 90);
   }
 
+  if (qs.get("solo") === "1") document.body.classList.add("solo");   // open straight into full screen
   if (DEMO) demo();
   else { connect(); refresh(); setInterval(refresh, 20000); setState("idle", 0, 0); }
 })();

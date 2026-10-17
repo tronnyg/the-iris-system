@@ -1,7 +1,10 @@
 """IRIS's own Ollama instance, so its tuning never changes Ollama for anything else.
 
 By default (`mode: managed`) IRIS starts a private `ollama serve` on 127.0.0.1:11435 when
-a conversation, night or idle job needs it, and stops it when none is running. It reads
+a conversation, night or idle job needs it, and stops it when none is running. Where systemd
+is available it runs as its own transient user unit (`iris-ollama-11435`), so it never dies
+with whatever started it (a oneshot job's cgroup is killed when the job ends, which once took
+a running conversation's LLM down with it); `systemctl --user stop iris-ollama-11435` works too. It reads
 the models already downloaded for the system Ollama (read-only, never pruned), so nothing
 is duplicated, but its server settings (flash attention, KV-cache type, parallelism,
 keep-alive, ...) are its own. `mode: external` uses whatever $OLLAMA_HOST points at
@@ -113,6 +116,8 @@ def _pid_path() -> Path:
 def _pid() -> int | None:
     try:
         pid = int(_pid_path().read_text().strip())
+        if pid <= 0:                              # never signal "all processes" (-1) or a group (0)
+            return None
         os.kill(pid, 0)
         return pid
     except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError, OSError):
@@ -144,6 +149,53 @@ def _spawn(cfg: dict, port: int, logfile: Path, extra: dict | None = None) -> su
                             stdin=subprocess.DEVNULL, start_new_session=True)
 
 
+def _unit(port: int) -> str:
+    return f"iris-ollama-{port}"
+
+
+def _systemd_ok() -> bool:
+    """Can we start a transient systemd user unit? (Off in tests and without a user manager.)"""
+    if os.environ.get("IRIS_OLLAMA_SYSTEMD", "1") == "0" or not shutil.which("systemd-run"):
+        return False
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-system-running"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.stdout.strip() in ("running", "degraded", "starting")
+
+
+def _unit_active(port: int) -> bool:
+    r = subprocess.run(["systemctl", "--user", "is-active", _unit(port)], capture_output=True, text=True)
+    return r.stdout.strip() in ("active", "activating", "reloading")
+
+
+def _start_unit(cfg: dict, port: int, logfile: Path) -> int | None:
+    """Run `ollama serve` as a transient user unit; returns its main PID."""
+    unit = _unit(port)
+    if _unit_active(port):                       # running but not answering: replace it
+        subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True)
+    subprocess.run(["systemctl", "--user", "reset-failed", unit], capture_output=True)
+    logfile.parent.mkdir(parents=True, exist_ok=True)
+    env = _env(cfg, port)
+    with open(logfile, "a") as fh:
+        fh.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} starting unit {unit} env "
+                 f"{ {k: v for k, v in env.items() if k.startswith('OLLAMA_')} }\n")
+    keep = {k: v for k, v in env.items() if k.startswith(("OLLAMA_", "CUDA_", "HIP_", "ROCR_"))
+            or k in ("PATH", "HOME", "LD_LIBRARY_PATH", "LANG")}
+    cmd = ["systemd-run", "--user", "--unit", unit, "--collect", "--quiet",
+           "--description", "IRIS's private Ollama (iris ollama stop)",
+           "-p", f"StandardOutput=append:{logfile}", "-p", f"StandardError=append:{logfile}"]
+    cmd += [f"--setenv={k}={v}" for k, v in keep.items()]
+    cmd += [cfg["binary"], "serve"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    if r.returncode != 0:
+        log.warning("systemd-run failed (%s); starting Ollama directly", r.stderr.strip()[:200])
+        return None
+    out = subprocess.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", unit],
+                         capture_output=True, text=True).stdout.strip()
+    return int(out) if out.isdigit() and int(out) > 0 else -1
+
+
 def _wait_up(url: str, proc: subprocess.Popen | None, secs: float = 25) -> bool:
     end = time.time() + secs
     while time.time() < end:
@@ -166,7 +218,21 @@ def ensure(settings=None) -> str:
         return system_url()
     url = url_for(cfg)
     if not _up(url):
-        proc = _spawn(cfg, cfg["port"], paths.logs_dir() / "ollama-iris.log")
+        logfile = paths.logs_dir() / "ollama-iris.log"
+        pid = _start_unit(cfg, cfg["port"], logfile) if _systemd_ok() else None
+        if pid is not None:
+            if not _wait_up(url, None):
+                subprocess.run(["systemctl", "--user", "stop", _unit(cfg["port"])], capture_output=True)
+                log.warning("IRIS's own Ollama did not come up on :%s (see %s); using %s",
+                            cfg["port"], logfile, system_url())
+                os.environ.pop("IRIS_OLLAMA_URL", None)
+                return system_url()
+            _pid_path().parent.mkdir(parents=True, exist_ok=True)
+            _pid_path().write_text(str(pid))
+            log.info("started IRIS's Ollama on %s (unit %s)", url, _unit(cfg["port"]))
+            os.environ["IRIS_OLLAMA_URL"] = url
+            return url
+        proc = _spawn(cfg, cfg["port"], logfile)
         if not _wait_up(url, proc):
             log.warning("could not start IRIS's own Ollama on :%s (see %s); using %s",
                         cfg["port"], paths.logs_dir() / "ollama-iris.log", system_url())
@@ -183,8 +249,16 @@ def ensure(settings=None) -> str:
     return url
 
 
-def stop() -> bool:
+def stop(settings=None) -> bool:
     """Stop the private instance (frees its VRAM). True if one was running."""
+    port = config(settings)["port"]
+    if shutil.which("systemctl") and os.environ.get("IRIS_OLLAMA_SYSTEMD", "1") != "0" and _unit_active(port):
+        subprocess.run(["systemctl", "--user", "stop", _unit(port)], capture_output=True, timeout=30)
+        try:
+            _pid_path().unlink()
+        except FileNotFoundError:
+            pass
+        return True
     pid = _pid()
     if pid is None:
         return False

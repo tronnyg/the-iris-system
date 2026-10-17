@@ -87,7 +87,12 @@ class Ollama:
             body["tools"] = tools
         t0 = time.perf_counter()
         try:
-            resp = requests.post(f"{self.url}/api/chat", json=body, stream=True, timeout=(5, 300))
+            try:
+                resp = requests.post(f"{self.url}/api/chat", json=body, stream=True, timeout=(5, 300))
+            except requests.ConnectionError:
+                if not self._revive():
+                    raise
+                resp = requests.post(f"{self.url}/api/chat", json=body, stream=True, timeout=(5, 300))
         except requests.RequestException as e:
             stats.done_reason, stats.error = "error", f"cannot reach Ollama at {self.url}: {e}"
             raise LLMError(stats.error) from e
@@ -130,6 +135,19 @@ class Ollama:
         finally:
             resp.close()
             stats.total_s = time.perf_counter() - t0
+
+    def _revive(self) -> bool:
+        """IRIS's own Ollama went away (stopped, crashed, killed): start it again and retry.
+
+        Only for the managed instance; an external Ollama is yours to run."""
+        managed = os.environ.get("IRIS_OLLAMA_URL", "").rstrip("/")
+        if not managed or managed != self.url:
+            return False
+        from . import ollama_ctl
+        from .util import log
+        log.warning("IRIS's Ollama at %s is not answering; restarting it", self.url)
+        self.url = ollama_ctl.ensure().rstrip("/")
+        return True
 
     def complete(self, messages: list[dict], options: dict | None = None, think: bool = False,
                  fmt: str | dict | None = None) -> str:
@@ -192,7 +210,11 @@ class Ollama:
         body = {"model": self.model, "prompt": "", "keep_alive": self.keep_alive}
         if options:
             body["options"] = {k: v for k, v in options.items() if k in _LOAD_OPTIONS}
-        requests.post(f"{self.url}/api/generate", json=body, timeout=300)
+        try:
+            requests.post(f"{self.url}/api/generate", json=body, timeout=300)
+        except requests.ConnectionError:
+            if self._revive():
+                requests.post(f"{self.url}/api/generate", json=body, timeout=300)
 
     def unload(self, model: str | None = None) -> None:
         try:

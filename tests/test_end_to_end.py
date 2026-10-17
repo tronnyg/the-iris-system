@@ -123,7 +123,7 @@ def test_cli_talk_web_ui(ollama, iris_home):
     try:
         assert wait(lambda e: e["type"] == "hello", 10)
         page = urllib.request.urlopen(f"{base}/", timeout=5).read().decode()
-        assert "face.js" in page and "app.js" in page
+        assert "core.js" in page and "app.js" in page
         state = json.loads(urllib.request.urlopen(f"{base}/api/state?token={token}", timeout=10).read())
         assert state["info"]["models"]["llm"] and "tts.speed" in state["knobs"]
         with pytest.raises(urllib.error.HTTPError) as e:
@@ -166,3 +166,28 @@ def test_bench_measures_and_records(ollama, iris_home):
     kinds = {row["kind"] for row in read_jsonl(paths.state_dir() / "bench.jsonl")}
     assert {"llm", "tools", "leak"} <= kinds
     assert (Settings.load().root / "pods/voice/pod.yaml").read_text() == before
+
+
+def test_llm_client_restarts_iris_ollama_when_it_vanishes(ollama, monkeypatch):
+    """If IRIS's own instance dies mid-session, the next request brings it back and retries."""
+    from iris import ollama_ctl
+    from iris.llm import Ollama
+    dead = "http://127.0.0.1:9"
+    monkeypatch.setenv("IRIS_OLLAMA_URL", dead)
+    calls = []
+
+    def fake_ensure(settings=None):
+        calls.append(1)
+        monkeypatch.setenv("IRIS_OLLAMA_URL", ollama)
+        return ollama
+
+    monkeypatch.setattr(ollama_ctl, "ensure", fake_ensure)
+    ol = Ollama("qwen3:4b", url=dead)
+    text = "".join(ol.stream([{"role": "user", "content": "capital of japan?"}]))
+    assert "Tokyo" in text and calls == [1] and ol.url == ollama
+    # an external Ollama that is down is reported, not "restarted"
+    monkeypatch.delenv("IRIS_OLLAMA_URL")
+    from iris.llm import LLMError
+    with pytest.raises(LLMError):
+        list(Ollama("qwen3:4b", url=dead).stream([{"role": "user", "content": "hi"}]))
+    assert calls == [1]

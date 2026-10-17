@@ -203,7 +203,7 @@ def test_web_demo_server_serves_page_without_a_session():
     url = srv.start()
     try:
         base = url.split("/?")[0]
-        assert b"IrisFace" in urllib.request.urlopen(f"{base}/face.js", timeout=5).read()
+        assert b"IrisCore" in urllib.request.urlopen(f"{base}/core.js", timeout=5).read()
         st = json.loads(urllib.request.urlopen(f"{base}/api/state?token={srv.token}", timeout=10).read())
         assert st["info"]["demo"] and "knobs" in st
         req = urllib.request.Request(f"{base}/cmd", b'{"cmd":"quit"}', {"X-Iris-Token": srv.token,

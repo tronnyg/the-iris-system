@@ -76,12 +76,14 @@ While talking:
 With a headset add `--headset` (or `audio: {headset: true}` in pod.yaml): IRIS keeps listening while she talks, so you can just talk over her to interrupt. With speakers leave it off, or she'd hear herself.
 
 **Web UI** (`iris talk --ui`, or `iris ui`): opens in your browser (local only, per-session token).
-An ASCII neural-network face with two eyes and an oscilloscope mouth that blink, look around and
-react to listening / thinking / speaking; live transcript (dim while generated, bright as spoken)
+A JARVIS-style ASCII neural core (a rotating 3D cloud of neurons with travelling signals inside
+HUD rings and a circular voice waveform) that changes with listening / thinking / speaking /
+asleep, and leans toward your pointer; `f` or double-click makes it full screen with live
+captions (Esc leaves); live transcript (dim while generated, bright as spoken)
 with one-click ratings; a per-turn latency waterfall (STT / LLM / generation / TTS / playback)
 against your target; vitals vs targets; GPU and Ollama status; your lists; findings; voice
 sliders; background-job controls; the morning report. Keys: Space/Enter talk or interrupt, `t`
-type, `m` hands-free/push-to-talk, `+ = -` rate. Preview without models: `iris eye`. Open it in
+type, `m` hands-free/push-to-talk, `+ = -` rate, `f` full screen. Preview without models: `iris eye`. Open it in
 an app window with `ui: {browser_cmd: "chromium --app={url}"}` in pod.yaml.
 
 Other ways in: `iris talk --vad` (hands-free, terminal), `iris chat` (typed, spoken replies),

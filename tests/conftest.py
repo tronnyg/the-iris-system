@@ -13,6 +13,7 @@ def iris_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")   # nothing listens: no real LLM in tests
     monkeypatch.setenv("IRIS_OLLAMA", "external")      # never start IRIS's own Ollama in tests
+    monkeypatch.setenv("IRIS_OLLAMA_SYSTEMD", "0")
     monkeypatch.delenv("IRIS_OLLAMA_URL", raising=False)
     monkeypatch.setenv("IRIS_NOTIFY", "0")             # no desktop notifications
     # Hermetic on a real machine too: no downloaded models, no network (else a test night run

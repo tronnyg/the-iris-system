@@ -148,8 +148,14 @@ Claude Code) do, as commits you can roll back. `mode: external` uses `$OLLAMA_HO
 URL, Host/Origin checked). The session publishes events on `Session.bus` (`iris/events.py`:
 non-blocking, bounded per subscriber): state + mic/output levels (30 Hz, only on change), user
 text, sanitized reply chunks, the chunk being played, tool calls, interruptions, finished turn
-records (latency breakdown). The page sends commands to `Session.command`. The face is an ASCII
-glyph grid on a canvas (neural field + eyes + oscilloscope mouth), 30 fps cap, paused when hidden.
+records (latency breakdown). The page sends commands to `Session.command`. The core
+(`static/core.js`) is an ASCII glyph grid on a canvas: a depth-shaded 3D neuron cloud with
+travelling signals, HUD rings and a voice waveform ring; 30 fps cap, paused when hidden; a
+full-screen mode keeps only the core and live captions.
+
+IRIS's Ollama runs as a transient systemd user unit (`iris-ollama-<port>`) where available, so a
+finishing job's cgroup can't take it down mid-conversation; the LLM client restarts it and
+retries once if it stops answering.
 - *Varied voice texts:* the round-trip texts are grouped (short, conversational, questions,
   numbers, emotion, technical, long) and interleaved with a nightly rotation, so the clips you
   rate cover every kind of speech. Rule tuning uses only the numbers group (it's what rules touch).
