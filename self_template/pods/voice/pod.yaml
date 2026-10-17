@@ -39,11 +39,11 @@ knobs:
 
 audio:
   input_device: null      # index or part of a name from `iris mic --list` (null = system default)
-  headset: auto           # true: keep listening while IRIS talks, so talking over her interrupts;
+  headset: true           # true: keep listening while IRIS talks, so talking over her interrupts;
                           # auto: on when the mic's name looks like a headset; false: never
 
 wake:
-  enabled: false          # true (or `iris talk --wake`): only respond after the wake word
+  enabled: true          # true (or `iris talk --wake`): only respond after the wake word
   words: [iris]
   follow_up_s: 12         # stay awake this long after each reply, so follow-ups need no wake word
 
