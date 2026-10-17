@@ -181,6 +181,9 @@ if [[ $SKIP_MODELS == 0 ]]; then
   whisper small.en || warn "whisper small.en failed"
   whisper "$TEACHER" || warn "teacher whisper failed"
   if [[ -x "$REPO/.venvs/chatterbox/bin/python" ]]; then
+    echo "downloading Chatterbox weights (~3 GB, resumable)" | tee -a "$LOG"
+    retry 4 run "$REPO/.venvs/chatterbox/bin/python" -c "from huggingface_hub import snapshot_download as d; d('ResembleAI/chatterbox-turbo', allow_patterns=['*.safetensors','*.json','*.txt','*.pt','*.model']); print('chatterbox weights ready')" \
+      || warn "Chatterbox weights incomplete; re-run ./setup.sh --tts chatterbox later"
     run "$IRIS" say --engine chatterbox --out "$REPO/logs/chatterbox-test.wav" "Hello. Chatterbox is ready." || fail "Chatterbox test failed (see $LOG)"
   fi
 fi

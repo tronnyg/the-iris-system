@@ -86,7 +86,8 @@ class WorkerTTS:
                 raise TTSError(resp.get("error", "unknown worker error"))
             return resp
 
-    def load(self, options: dict, opts: dict | None = None, timeout: float = 900) -> dict:
+    def load(self, options: dict, opts: dict | None = None, timeout: float = 3600) -> dict:
+        # generous: a first load may still be downloading model weights on a slow line
         resp = self._call({"cmd": "load", "options": options, "opts": opts or {}}, timeout)
         self.sr = int(resp.get("sr", self.sr))
         self.info = resp.get("info") or {}
