@@ -34,7 +34,7 @@ class SlowSTT:
 
 def session(headset=False, stt=None, reply="Here is my answer to that."):
     from iris.talk import Session
-    s = Session(mode="vad", speak=True, listen=False, headset=headset)
+    s = Session(mode="vad", speak=True, listen=False, headset=headset, wake=False)
     s.stt = stt or SlowSTT()
     s.player = FakeClockPlayer(sr=24000)
     s.player.start()

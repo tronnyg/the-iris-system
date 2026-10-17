@@ -1,0 +1,25 @@
+# Tool-choice cases for the `bench` stage: does the LLM ask for the right tool?
+# Tools are NOT executed during the benchmark (no network). expect_tool: null = no tool.
+# Tool names: web_search, calculator, current_time.
+cases:
+  - id: calc-multiply
+    user: "What's 4831 times 27?"
+    expect_tool: calculator
+  - id: calc-percent
+    user: "What is 17.5 percent of 2,340?"
+    expect_tool: calculator
+  - id: time-now
+    user: "What time is it right now?"
+    expect_tool: current_time
+  - id: time-date
+    user: "What's today's date?"
+    expect_tool: current_time
+  - id: search-news
+    user: "What's the latest news about the Artemis moon mission?"
+    expect_tool: web_search
+  - id: search-weather
+    user: "Is it going to rain in London tomorrow?"
+    expect_tool: web_search
+  - id: none-chat
+    user: "Tell me a fun fact about octopuses."
+    expect_tool: null

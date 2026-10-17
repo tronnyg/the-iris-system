@@ -17,8 +17,10 @@ from typing import Iterator
 import requests
 
 def ollama_url() -> str:
-    """$OLLAMA_HOST, read when a client is made (not at import, so tests can point it elsewhere)."""
-    url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+    """IRIS's own instance if one is running (see ollama_ctl), else $OLLAMA_HOST.
+
+    Read when a client is made (not at import, so tests can point it elsewhere)."""
+    url = os.environ.get("IRIS_OLLAMA_URL") or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
     return url if url.startswith("http") else "http://" + url
 
 
@@ -51,6 +53,10 @@ class Cancel:
 
     def is_set(self) -> bool:
         return self.event.is_set()
+
+
+# options that decide how the model is loaded (changing one reloads it)
+_LOAD_OPTIONS = {"num_ctx", "num_batch", "num_gpu", "main_gpu", "num_thread", "use_mmap", "low_vram"}
 
 
 class Ollama:
@@ -178,11 +184,15 @@ class Ollama:
         names = self.installed_models()
         return name in names or f"{name}:latest" in names
 
-    def warm(self) -> None:
-        """Load the model into memory now so the first reply isn't slow."""
-        requests.post(f"{self.url}/api/generate",
-                      json={"model": self.model, "prompt": "", "keep_alive": self.keep_alive},
-                      timeout=300)
+    def warm(self, options: dict | None = None) -> None:
+        """Load the model into memory now so the first reply isn't slow.
+
+        Pass the same options the chat requests use: a different num_ctx (or num_batch,
+        num_gpu ...) makes Ollama reload the model on the first real turn."""
+        body = {"model": self.model, "prompt": "", "keep_alive": self.keep_alive}
+        if options:
+            body["options"] = {k: v for k, v in options.items() if k in _LOAD_OPTIONS}
+        requests.post(f"{self.url}/api/generate", json=body, timeout=300)
 
     def unload(self, model: str | None = None) -> None:
         try:

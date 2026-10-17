@@ -6,6 +6,7 @@ import argparse
 import json
 import shutil
 import sys
+import time
 import webbrowser
 
 from . import paths, selfstore
@@ -20,21 +21,28 @@ def _settings():
 
 # -- conversation -----------------------------------------------------------------------
 def cmd_talk(a) -> None:
+    from . import ollama_ctl
     from .talk import Session
     ui = getattr(a, "ui", False)
     s = Session(mode="vad" if (a.vad or ui) and not getattr(a, "ptt", False) else "ptt", engine=a.engine,
                 speak=not a.silent, listen=not a.no_mic, no_audio_device=a.no_audio,
-                mic=getattr(a, "mic", None), ui=ui, headset=True if getattr(a, "headset", False) else None,
-                wake=True if getattr(a, "wake", False) else None, tools=not getattr(a, "no_tools", False))
-    s.run()
-    if not a.no_sleep:
-        print("Reflecting on this session (memory + lessons) ...", flush=True)
-        from .improve import sleep
-        r = sleep.run(model=None, sessions=[s.writer.session])
-        for c in r["memory_changes"]:
-            print("  " + c)
-        if r["regressions"]:
-            print(f"  {len(r['regressions'])} moment(s) saved as regression evals")
+                mic=getattr(a, "mic", None), web=ui, headset=True if getattr(a, "headset", False) else None,
+                wake=True if getattr(a, "wake", False) else None, tools=not getattr(a, "no_tools", False),
+                port=getattr(a, "port", None), open_browser=not getattr(a, "no_browser", False))
+    try:
+        s.run()
+        if not a.no_sleep:
+            print("Reflecting on this session (memory, lessons, your requests) ...", flush=True)
+            from .improve import sleep
+            r = sleep.run(model=None, sessions=[s.writer.session])
+            for c in r["memory_changes"]:
+                print("  " + c)
+            if r["regressions"]:
+                print(f"  {len(r['regressions'])} moment(s) saved as regression evals")
+            for x in r.get("requests") or []:
+                print(f"  suggested for your improvements list: {x}")
+    finally:
+        ollama_ctl.release()        # frees the GPU unless a job still needs IRIS's Ollama
 
 
 def cmd_mic(a) -> None:
@@ -95,25 +103,197 @@ def cmd_mic(a) -> None:
 
 
 def cmd_requests(a) -> None:
-    from .improve.sleep import open_requests
-    from .util import read_jsonl, write_jsonl
-    p = paths.state_dir() / "requests.jsonl"
-    reqs = open_requests()
+    """Older name for `iris list improvements`."""
+    from . import lists
+    selfstore.init()
     if a.close:
-        if not 1 <= a.close <= len(reqs):
-            sys.exit(f"no open request #{a.close}")
-        target = reqs[a.close - 1]
-        rows = list(read_jsonl(p))
-        for r in rows:
-            if r.get("ts") == target.get("ts") and r.get("text") == target.get("text"):
-                r["status"] = "closed"
-        write_jsonl(p, rows)
-        print(f"closed: {target['text']}")
+        r = lists.set_status(a.close, "done")
+        sys.exit(f"no item {a.close}") if not r else print(f"done: {r['text']}")
         return
-    if not reqs:
-        print("No open requests.")
-    for i, r in enumerate(reqs, 1):
-        print(f"{i:>3}. {r['text']}")
+    _print_items(lists.items("improvements"))
+
+
+def _print_items(rows) -> None:
+    if not rows:
+        print("  (empty)")
+    for r in rows:
+        mark = "?" if r.get("status") == "suggested" else " "
+        print(f"  {mark}{r['id']:>4}  [{r['list']}] {r['text']}" + (f"   ({r['source']})" if r.get("source") else ""))
+
+
+def cmd_list(a) -> None:
+    """iris list [name] | add TEXT [--to name] | done ID [--note X] | drop ID [--note X] | --all"""
+    from . import lists
+    selfstore.init()
+    args = list(a.args)
+    act = args.pop(0) if args and args[0] in ("add", "done", "drop", "open", "show") else "show"
+    if act == "add":
+        text = " ".join(args)
+        item = lists.add(text, a.to or "todo", source="cli")
+        print(f"added #{item['id']} to {item['list']}: {item['text']}" if item else "already on that list")
+    elif act in ("done", "drop", "open"):
+        if not args:
+            sys.exit(f"usage: iris list {act} <id> [--note ...]")
+        st = {"done": "done", "drop": "dropped", "open": "open"}[act]
+        for i in args:
+            r = lists.set_status(int(i), st, a.note)
+            print(f"{st}: #{i} {r['text']}" if r else f"no item #{i}")
+    else:
+        name = args[0] if args else None
+        rows = lists.items(name, None if a.all else ("open", "suggested"))
+        _print_items(rows)
+        if rows and not a.all:
+            print("\n  ? = suggested by the reflection (confirm with: iris list open <id>)")
+
+
+def cmd_findings(a) -> None:
+    """iris findings [--area X] [--all] | done ID [--note X] | drop ID [--note X]"""
+    from .improve import insights
+    selfstore.init()
+    args = list(a.args)
+    if args and args[0] in ("done", "drop", "open"):
+        st = {"done": "done", "drop": "dropped", "open": "open"}[args[0]]
+        for i in args[1:]:
+            r = insights.set_status(int(str(i).lstrip("Ff")), st, a.note)
+            print(f"{st}: F{i} {r['title']}" if r else f"no finding {i}")
+        return
+    rows = insights.ranked(insights.findings(None if a.all else ("open",), area=a.area))
+    if not rows:
+        print("No findings. The night / idle jobs write them (iris night, iris jobs idle).")
+    for r in rows:
+        tag = " (local model's idea)" if r.get("source") == "local-model" else ""
+        print(f"  F{r['id']:<4} [{r['area']}] {r['title']}  x{r.get('count', 1)} · {r.get('source')}{tag}"
+              + (f"  [{r['status']}]" if a.all else ""))
+
+
+def cmd_dossier(a) -> None:
+    from pathlib import Path
+    from .improve import insights
+    out = insights.build_dossier(Path(a.out) if a.out else None, days=a.days)
+    print(f"dossier: {out}")
+    for f in sorted(out.glob("*.md")):
+        print(f"  {f.name:20s} {f.stat().st_size:>8} bytes")
+    print("\nIn Claude Code on this repo: /improve")
+
+
+def cmd_jobs(a) -> None:
+    from . import jobs
+    selfstore.init()
+    act = a.action
+    if act == "status":
+        st = jobs.status()
+        ts = lambda v: __import__("datetime").datetime.fromtimestamp(v).strftime("%Y-%m-%d %H:%M") if v else "never"
+        print(f"running     {('pid ' + str(st['running'])) if st['running'] else 'nothing'}")
+        print(f"paused      {'yes' + (' until ' + ts(st['paused_until']) if st['paused_until'] else ' (until resumed)') if st['paused'] else 'no'}")
+        print(f"last night  {ts(st['last_night'])}")
+        print(f"last idle   {ts(st['last_idle'])}   next idle run: {st['idle_blocked'] or 'allowed now'}")
+        print("timers      " + "  ".join(f"{k}: {v}" for k, v in st["timers"].items()))
+        print("\nControl: iris jobs pause [--for 2h] | resume | stop | enable | disable,  iris off")
+    elif act == "pause":
+        d = jobs.pause(jobs.parse_duration(a.for_))
+        print("background jobs paused" + (f" for {a.for_}" if d["until"] else " until `iris jobs resume`"))
+    elif act == "resume":
+        print("resumed" if jobs.resume() else "wasn't paused")
+    elif act == "stop":
+        print("stopped the running job" if jobs.stop() else "nothing was running")
+    elif act == "enable":
+        done = jobs.enable()
+        print("installed and started: " + ", ".join(f"{t}.timer" for t in done))
+        print("  nightly 03:00 (full loop) + every 30 min when you're away (short, yields to you)")
+        print("  undo: iris jobs disable   pause: iris jobs pause")
+    elif act == "disable":
+        done = jobs.disable()
+        print("removed: " + (", ".join(done) or "nothing was installed"))
+    elif act == "idle":
+        r = jobs.run_idle(force=a.force, verbose=a.verbose)
+        if r.get("skipped"):
+            print(f"idle job skipped: {r['skipped']}")
+        else:
+            for k, v in r.get("stages", {}).items():
+                print(f"  {k:10s} {v.get('status'):8s} {v.get('secs', '')}s {v.get('error') or v.get('why') or ''}")
+            if r.get("stopped"):
+                print(f"stopped: {r['stopped']}")
+
+
+def cmd_ollama(a) -> None:
+    import yaml
+    from . import ollama_ctl
+    s = _settings()
+    act, rest = a.action, list(a.args)
+    if act == "status":
+        st = ollama_ctl.status(s)
+        print(f"mode        {st['mode']}" + (f"  ({st['why']})" if st.get("why") else ""))
+        print(f"IRIS uses   {st['url']}  {'up ' + (st['iris'].get('version') or '') if st['iris']['up'] else 'not running'}"
+              + (f"  pid {st['pid']}" if st.get("pid") else ""))
+        for m in st["iris"].get("loaded") or []:
+            print(f"  loaded    {m['name']}  {m['vram_mb']} MB VRAM")
+        if st["system"]["url"] != st["url"]:
+            print(f"system      {st['system']['url']}  {'up' if st['system']['up'] else 'down'}"
+                  + "".join(f"\n  loaded    {m['name']}  {m['vram_mb']} MB VRAM (not IRIS's)" for m in st['system'].get('loaded') or []))
+        print(f"models dir  {st.get('models_dir')} (read-only for IRIS)")
+        print("server env  " + " ".join(f"{k}={v}" for k, v in st["env"].items()))
+        print("profiles    " + (json.dumps(st["profiles"]) if st["profiles"] else "(none)"))
+    elif act == "start":
+        print(ollama_ctl.ensure(s))
+    elif act == "stop":
+        print("stopped" if ollama_ctl.stop() else "IRIS's Ollama wasn't running")
+    elif act == "restart":
+        ollama_ctl.stop()
+        print(ollama_ctl.ensure(Settings_reload()))
+    elif act == "set":
+        if len(rest) != 2:
+            sys.exit("usage: iris ollama set <OLLAMA_KEY|mode|port|models_dir> <value>   (value 'none' removes)")
+        key, val = rest[0], yaml.safe_load(rest[1])
+        if ollama_ctl.set_key(key, val, s.root):
+            sha = selfstore.commit(f"you set ollama {key} = {val}", files=[ollama_ctl.REL], auto=False)
+            print(f"{key} = {val} ({sha}); applies after: iris ollama restart")
+        else:
+            print("unchanged")
+    elif act == "profile":
+        if len(rest) != 3:
+            sys.exit("usage: iris ollama profile <model> <option> <value>   (e.g. qwen3:4b num_batch 256; 'none' removes)")
+        model, opt, val = rest[0], rest[1], yaml.safe_load(rest[2])
+        if ollama_ctl.set_profile(model, opt, val, s.root):
+            sha = selfstore.commit(f"you set ollama profile {model} {opt} = {val}", files=[ollama_ctl.REL], auto=False)
+            print(f"{model}: {opt} = {val} ({sha})")
+        else:
+            print("unchanged")
+    elif act == "bench":
+        from .improve import night
+        r = night.main(only={"bench"}, skip={"report"}, verbose=a.verbose)
+        print(json.dumps((r.get("stages", {}).get("bench") or {}), indent=1, default=str)[:6000])
+
+
+def Settings_reload():
+    from .config import Settings
+    return Settings.load()
+
+
+def cmd_off(a) -> None:
+    """Stop everything IRIS runs: the session, background jobs, its Ollama, and pause the timers."""
+    from . import jobs, ollama_ctl
+    from .talk import send_control
+    selfstore.init()
+    print("session:        " + ("asked to quit" if send_control("quit") else "none running"))
+    print("background job: " + ("stopped" if jobs.stop() else "none running"))
+    if a.pause:
+        jobs.pause(jobs.parse_duration(a.pause) if a.pause != "forever" else None)
+        print("jobs:           paused" + ("" if a.pause == "forever" else f" for {a.pause}"))
+    time.sleep(1.0)
+    print("IRIS's Ollama:  " + ("stopped (VRAM freed)" if ollama_ctl.stop() else "not running"))
+    st = ollama_ctl.status()
+    if st["mode"] == "external" or st["system"]["url"] == st["url"]:
+        from .llm import Ollama
+        ol = Ollama("x", url=st["url"])
+        for m in ol.running():
+            ol.unload(m.get("name"))
+            print(f"unloaded:       {m.get('name')} from {st['url']}")
+    print("Timers (if enabled) still fire later; `iris jobs pause` or `iris jobs disable` stops that.")
+
+
+def cmd_ui(a) -> None:
+    a.ui = True
+    cmd_talk(a)
 
 
 def cmd_chat(a) -> None:
@@ -370,7 +550,8 @@ def main(argv=None) -> None:
         return p
 
     for name, fn, h in (("talk", cmd_talk, "voice conversation (push-to-talk by default)"),
-                        ("chat", cmd_chat, "typed conversation, spoken replies")):
+                        ("chat", cmd_chat, "typed conversation, spoken replies"),
+                        ("ui", cmd_ui, "talk with the web UI (same as `iris talk --ui`)")):
         p = add(name, fn, h)
         p.add_argument("--vad", action="store_true", help="hands-free (voice activity detection)")
         p.add_argument("--engine", help="voice engine for this session: kokoro | chatterbox | tone")
@@ -379,18 +560,46 @@ def main(argv=None) -> None:
         p.add_argument("--no-audio", action="store_true", help="no sound card (testing)")
         p.add_argument("--no-sleep", action="store_true", help="skip the reflection after the session")
         p.add_argument("--mic", help="input device: index or part of its name (see `iris mic --list`)")
-        p.add_argument("--ui", action="store_true", help="full-screen animated eye with live captions (hands-free)")
+        p.add_argument("--ui", action="store_true", help="open the web UI in your browser (hands-free)")
+        p.add_argument("--no-browser", action="store_true", help="with --ui: print the URL instead of opening it")
+        p.add_argument("--port", type=int, help="with --ui: port for the web UI (default 7770; 0 = any free)")
         p.add_argument("--wake", action="store_true",
                        help="only respond after the wake word (\"Iris ...\"); other speech is ignored and not kept")
         p.add_argument("--no-tools", action="store_true", help="no web search / calculator / clock this session")
         p.add_argument("--headset", action="store_true",
                        help="you wear a headset: keep listening while IRIS talks, so talking over her interrupts")
         p.add_argument("--ptt", action="store_true", help="with --ui: push-to-talk (Space) instead of hands-free")
-    p = add("eye", lambda a: __import__("iris.ui", fromlist=["demo"]).demo(a.seconds),
-            "preview the --ui animation without loading any models")
-    p.add_argument("--seconds", type=float, default=24.0)
-    p = add("requests", cmd_requests, "things you asked IRIS for (collected by the reflection)")
-    p.add_argument("--close", type=int, help="mark request <n> as done")
+    p = add("eye", lambda a: __import__("iris.web.server", fromlist=["demo"]).demo(a.port, not a.no_browser, a.seconds),
+            "preview the web UI (animates itself, no models loaded)")
+    p.add_argument("--seconds", type=float, help="stop after this long (default: until Ctrl+C)")
+    p.add_argument("--port", type=int)
+    p.add_argument("--no-browser", action="store_true")
+    p = add("list", cmd_list, "your lists: todo / features / improvements (iris list add TEXT --to features)")
+    p.add_argument("args", nargs="*", help="[name] | add TEXT | done ID | drop ID | open ID")
+    p.add_argument("--to", help="with add: todo | features | improvements (default todo)")
+    p.add_argument("--note", help="with done/drop: why, or the commit that did it")
+    p.add_argument("--all", action="store_true", help="include done and dropped items")
+    p = add("requests", cmd_requests, "older name for `iris list improvements`")
+    p.add_argument("--close", type=int, help="mark item <id> as done")
+    p = add("findings", cmd_findings, "what the local loops noticed (iris findings done F3 --note <sha>)")
+    p.add_argument("args", nargs="*", help="done ID | drop ID | open ID")
+    p.add_argument("--area")
+    p.add_argument("--note")
+    p.add_argument("--all", action="store_true")
+    p = add("dossier", cmd_dossier, "write the improvement dossier for a Claude Code session (.iris/dossier/)")
+    p.add_argument("--out")
+    p.add_argument("--days", type=int, default=7)
+    p = add("jobs", cmd_jobs, "background learning: status | pause | resume | stop | enable | disable | idle")
+    p.add_argument("action", nargs="?", default="status",
+                   choices=["status", "pause", "resume", "stop", "enable", "disable", "idle"])
+    p.add_argument("--for", dest="for_", help="with pause: e.g. 2h, 30m (default: until resume)")
+    p.add_argument("--force", action="store_true", help="with idle: run even if you talked recently")
+    p = add("ollama", cmd_ollama, "IRIS's own Ollama: status | start | stop | restart | set | profile | bench")
+    p.add_argument("action", nargs="?", default="status",
+                   choices=["status", "start", "stop", "restart", "set", "profile", "bench"])
+    p.add_argument("args", nargs="*")
+    p = add("off", cmd_off, "stop everything IRIS is running (session, jobs, its Ollama)")
+    p.add_argument("--pause", help="also pause background jobs: 2h, 12h ... or 'forever'")
     p = add("mic", cmd_mic, "test the microphone: level, what Whisper hears, which device")
     p.add_argument("--list", action="store_true", help="list input devices and exit")
     p.add_argument("--device", help="index or part of a device name (default: the one iris talk uses)")

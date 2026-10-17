@@ -197,3 +197,29 @@ def apply(settings, change: VoiceChange, history: list) -> str:
         from .util import log
         log.warning("could not save voice change: %s", e)
     return change.ack
+
+
+def set_knob(settings, name: str, value: float, history: list | None = None) -> float:
+    """Set one voice knob to a value (the web UI's sliders), live and persisted. Returns it."""
+    from . import selfstore
+    from .config import set_value
+    if name not in KNOBS:
+        raise KeyError(f"{name} is not a voice knob")
+    spec = {**KNOBS[name], **(settings.knob_spec(name) or {})}
+    new = round(min(spec["max"], max(spec["min"], float(value))), 2)
+    if isinstance(spec["step"], int) and float(spec["step"]).is_integer() and not isinstance(spec["value"], float):
+        new = int(round(new))
+    cur = knob(settings, name)
+    if new == cur:
+        return new
+    if history is not None:
+        history.append((name, cur))
+    settings.overrides[name] = new
+    try:
+        ensure_knobs(settings.root)
+        set_value("knobs", name, new, settings.root)
+        selfstore.commit(f"voice: you set {name} {cur} -> {new} (web UI)", files=["pods/voice/pod.yaml"], auto=False)
+    except Exception as e:
+        from .util import log
+        log.warning("could not save voice change: %s", e)
+    return new

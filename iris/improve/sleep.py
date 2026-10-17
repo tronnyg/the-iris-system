@@ -48,23 +48,33 @@ def split_requests(facts: list[str]) -> tuple[list[str], list[str]]:
 
 
 def record_requests(items: list[str], session: str) -> list[str]:
-    """Append new feature requests (deduplicated) for the report and the escalation."""
-    from ..util import append_jsonl, read_jsonl
-    p = paths.state_dir() / "requests.jsonl"
-    seen = {r.get("text", "").lower() for r in read_jsonl(p)}
+    """Requests inferred from a conversation go on the improvements list as *suggested*
+    (deduplicated): you only asked in passing, so a Claude Code session confirms them first.
+    Things you explicitly add ("add X to my feature list") are `open` instead."""
+    from .. import lists
     new = []
     for it in items:
-        it = it.strip()
-        if it and it.lower() not in seen:
-            append_jsonl(p, {"ts": time.time(), "session": session, "text": it, "status": "open"})
-            seen.add(it.lower())
-            new.append(it)
+        if lists.add(it, "improvements", source="reflection", status="suggested", session=session):
+            new.append(it.strip())
     return new
 
 
 def open_requests() -> list[dict]:
-    from ..util import read_jsonl
-    return [r for r in read_jsonl(paths.state_dir() / "requests.jsonl") if r.get("status", "open") == "open"]
+    from .. import lists
+    return lists.items("improvements")
+
+
+def record_gaps(items: list[str], session: str) -> list[str]:
+    """Things the user tried that IRIS couldn't do: findings for the dossier."""
+    from . import insights
+    out = []
+    for it in items:
+        it = str(it).strip()
+        if it:
+            insights.add("tools", "capability-gap", it, [f"session {session}"], source="reflection",
+                         confidence="low")
+            out.append(it)
+    return out
 
 
 def _state_path():
@@ -98,6 +108,8 @@ def reflect(turns: list[dict], memory: Memory, llm: Ollama) -> tuple[Delta, str]
         '  "lessons_remove": existing lessons the transcript contradicts (copy exactly)\n'
         '  "user_requests": things the user asked the assistant to do differently or new features '
         'they want, one short sentence each (max 3)\n'
+        '  "capability_gaps": things the user wanted that the assistant could not do at all '
+        '(no tool, no access, no knowledge), one short phrase each (max 2)\n'
         '  "summary": two or three sentences on what this conversation was about\n'
         "Use empty lists when nothing qualifies (that is the common case)."
     )
@@ -109,6 +121,8 @@ def reflect(turns: list[dict], memory: Memory, llm: Ollama) -> tuple[Delta, str]
     delta.user_add, moved = split_requests(delta.user_add)
     reqs = out.get("user_requests") if isinstance(out.get("user_requests"), list) else []
     delta.requests = [str(x).strip() for x in reqs if str(x).strip()][:3] + moved
+    gaps = out.get("capability_gaps") if isinstance(out.get("capability_gaps"), list) else []
+    delta.gaps = [str(x).strip() for x in gaps if str(x).strip()][:2]
     return delta, str(out.get("summary") or "").strip()
 
 
@@ -175,6 +189,7 @@ def run(settings: Settings | None = None, model: str | None = None, sessions: li
                                    settings.pol("memory.max_lessons", 30))
             new_reqs = record_requests(getattr(delta, "requests", []), sid)
             report.setdefault("requests", []).extend(new_reqs)
+            report.setdefault("gaps", []).extend(record_gaps(getattr(delta, "gaps", []), sid))
             if summary:
                 date = dt.date.fromtimestamp(turns[0].get("ts", 0) or 0).isoformat()
                 memory.add_episode(f"{date}-{sid}", f"{date}: {summary}")

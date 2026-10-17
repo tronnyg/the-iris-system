@@ -33,6 +33,7 @@ class Settings:
     root: Path
     overrides: dict[str, Any] = field(default_factory=dict)
     pron_rules: dict[str, list[str]] = field(default_factory=dict)
+    ollama: dict = field(default_factory=dict)      # pods/brain/ollama.yaml (see ollama_ctl)
 
     persona_name: str = "iris"
 
@@ -50,6 +51,7 @@ class Settings:
             policy=_load("policy.yaml", root),
             pronunciations={str(k): str(v) for k, v in pron.items()},
             pron_rules=rules,
+            ollama=_load("pods/brain/ollama.yaml", root),
             root=root,
             overrides=dict(overrides or {}),
         )

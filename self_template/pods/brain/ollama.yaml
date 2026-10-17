@@ -1,0 +1,18 @@
+# IRIS's private Ollama instance (see iris/ollama_ctl.py). Edited by you or a Claude Code
+# session (`iris ollama set ...`), never by the improvement loops. Changes apply the next
+# time the instance starts: `iris ollama restart`.
+#
+# mode      managed: IRIS runs its own `ollama serve` on `port` with the env below, reading the
+#           system's downloaded models (read-only), so tuning here never affects other apps.
+#           external: use $OLLAMA_HOST (default 127.0.0.1:11434) as it is.
+# env       server settings for IRIS's instance only (OLLAMA_FLASH_ATTENTION, OLLAMA_KV_CACHE_TYPE,
+#           OLLAMA_KEEP_ALIVE, OLLAMA_NUM_PARALLEL, OLLAMA_MAX_LOADED_MODELS, OLLAMA_CONTEXT_LENGTH ...)
+# profiles  request options per model (num_batch, num_gpu, num_thread, ...); they override the
+#           pod.yaml knobs for the keys they set. The nightly `bench` stage measures candidates.
+mode: managed
+port: 11435
+env:
+  OLLAMA_KEEP_ALIVE: 30m
+  OLLAMA_NUM_PARALLEL: "1"
+  OLLAMA_MAX_LOADED_MODELS: "1"
+profiles: {}

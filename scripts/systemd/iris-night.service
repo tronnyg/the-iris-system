@@ -1,6 +1,6 @@
 [Unit]
 Description=IRIS nightly improvement loop
-After=network-online.target ollama.service
+After=network-online.target
 
 [Service]
 Type=oneshot
