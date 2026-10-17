@@ -14,7 +14,10 @@ if [[ -z "${IRIS_INHIBITED:-}" ]] && command -v systemd-inhibit >/dev/null; then
   exec systemd-inhibit --what=idle:sleep --who=iris --why="IRIS setup and first night run" "$0" "$@"
 fi
 echo "== $(date) setup =="
-./setup.sh "$@"
+if ! ./setup.sh "$@"; then
+  echo "== $(date) setup stopped early; fix the [fail] line above and run ./tonight.sh again =="
+  exit 1
+fi
 echo "== $(date) first night run =="
 "$HOME/.local/bin/iris" night || true
 echo "== $(date) done =="

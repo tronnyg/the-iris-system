@@ -43,7 +43,17 @@ TORCH_INDEX="https://download.pytorch.org/whl/cu126"   # cu126 wheels still incl
 say "Checking prerequisites"
 missing=()
 command -v git >/dev/null || missing+=(git)
-command -v uv  >/dev/null || { fail "uv not found: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
+# uv (Python + package manager): use an existing one, or install it for this user (no sudo)
+for d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/.local/share/mise/shims"; do
+  [[ -x "$d/uv" ]] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH";; esac
+done
+if ! command -v uv >/dev/null; then
+  warn "uv not found; installing it into ~/.local/bin (user-level, no sudo)"
+  curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh >> "$LOG" 2>&1
+  PATH="$HOME/.local/bin:$PATH"
+  command -v uv >/dev/null || { fail "could not install uv; install it yourself: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
+fi
+export PATH
 ldconfig -p 2>/dev/null | grep -q libportaudio || missing+=(portaudio)
 command -v espeak-ng >/dev/null || missing+=(espeak-ng)
 ldconfig -p 2>/dev/null | grep -q libsndfile || missing+=(libsndfile)
@@ -171,6 +181,6 @@ if [[ $TIMER == 1 ]]; then
 fi
 
 say "Checking everything"
-"$IRIS" doctor | tee -a "$LOG"
+"$IRIS" doctor | tee -a "$LOG" || true   # problems are listed; the night run still goes ahead
 echo
 echo "Setup log: $LOG"
