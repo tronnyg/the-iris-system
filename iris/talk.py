@@ -1,4 +1,4 @@
-"""The live loop: a voice (or typed) conversation in the terminal.
+"""The live loop: a voice (or typed) conversation, in the terminal or the browser (--ui).
 
 Controls
     Enter on an empty line     start / stop talking (push-to-talk toggle)
@@ -11,6 +11,9 @@ A global hotkey can drive the same session through a socket, e.g. on Hyprland:
     bind  = SUPER, F12, exec, iris ptt down
     bindr = SUPER, F12, exec, iris ptt up
 Pressing the key while the agent is speaking interrupts it (barge-in).
+
+Everything that happens is published on `Session.bus` (iris/events.py); the web UI
+(iris/web/server.py) subscribes to it and sends commands back through `Session.command`.
 """
 
 from __future__ import annotations
@@ -18,17 +21,19 @@ from __future__ import annotations
 import os
 import queue
 import re
+import signal
 import socket
 import sys
 import threading
 import time
 
-from . import locks, paths, selfstore
+from . import locks, ollama_ctl, paths, selfstore
 from .audio import FakeClockPlayer, Player, Recorder, Utterance, VADConfig
 from .config import Settings
+from .events import Bus
 from .llm import Ollama
 from .memory import Memory
-from .pipeline import Conversation
+from .pipeline import Conversation, feedback_command, llm_options
 from .stt import STT, is_filler
 from .trace import TraceWriter
 from .tts.client import engine_load_options, make_tts, synth_opts
@@ -37,8 +42,9 @@ from .util import log
 
 class Session:
     def __init__(self, mode: str = "ptt", engine: str | None = None, speak: bool = True,
-                 listen: bool = True, no_audio_device: bool = False, mic=None, ui: bool = False,
-                 headset: bool | None = None, wake: bool | None = None, tools: bool = True):
+                 listen: bool = True, no_audio_device: bool = False, mic=None, web: bool = False,
+                 headset: bool | None = None, wake: bool | None = None, tools: bool = True,
+                 port: int | None = None, open_browser: bool = True):
         self.mic = mic
         self.use_tools = tools
         self.headset_flag = headset
@@ -47,11 +53,16 @@ class Session:
         self.handled_uid = 0          # every utterance up to here has been answered or dismissed
         self.superseded: set[int] = set()   # merged into a later utterance: never answer on their own
         self.cur_utt = None
-        self.ui = None
-        self.want_ui = ui
+        self.web = web
+        self.port = port
+        self.open_browser = open_browser
+        self.server = None
+        self.bus = Bus()
+        self.recent: list[dict] = []          # this session's turn summaries (for the UI)
         paths.ensure_dirs()
         selfstore.init()
         self.s = Settings.load()
+        ollama_ctl.ensure(self.s)             # IRIS's own Ollama (pods/brain/ollama.yaml)
         self.mode = mode
         self.speak = speak
         self.listen = listen
@@ -84,7 +95,9 @@ class Session:
             raise SystemExit("Ollama isn't running. Start it (systemctl start ollama, or `ollama serve`).")
         if not self.llm.has_model():
             raise SystemExit(f"Ollama model {self.llm.model} isn't downloaded. Run: ollama pull {self.llm.model}")
-        threading.Thread(target=self.llm.warm, daemon=True).start()
+        self._preempt_jobs()
+        opts = llm_options(self.s, self.llm.model)
+        threading.Thread(target=self._warm, args=(opts,), daemon=True).start()
         if self.speak:
             self.tts = make_tts(self.engine)
             t0 = time.perf_counter()
@@ -113,9 +126,15 @@ class Session:
         from . import tools as tool_mod
         tools = tool_mod.registry(self.s) if self.use_tools else {}
         self.conv = Conversation(self.s, self.llm, self.tts, self.player, self.writer, self.memory,
-                                 on_text=lambda t: self.ui is None and print(f"  {name}: {t}", flush=True),
+                                 on_text=self._on_say,
                                  on_first_audio_queued=self._on_first_audio,
-                                 tools=tools, on_tool=self._on_tool)
+                                 tools=tools, on_tool=self._on_tool,
+                                 on_delta=lambda d: self.bus.publish("delta", text=d),
+                                 on_turn=self._on_turn,
+                                 on_interrupt=lambda why: self.bus.publish("interrupt", reason=why))
+        if self.player is not None:
+            # runs inside the audio callback: publishing never blocks
+            self.player.on_chunk_start = lambda text, dur: self.bus.publish("spoken", text=text, dur=round(dur, 2))
         if tools:
             how = "native" if self.conv.tools_native() else "text protocol"
             print(f"  tools: {', '.join(tools)} ({how})", flush=True)
@@ -128,6 +147,50 @@ class Session:
                                   "tts": self.engine if self.speak else None})
         threading.Thread(target=self._worker, daemon=True).start()
         threading.Thread(target=self._socket_server, daemon=True).start()
+
+    def _warm(self, opts: dict) -> None:
+        try:
+            self.llm.warm(opts)
+        except Exception as e:
+            log.warning("model warm-up failed: %s", e)
+
+    def _preempt_jobs(self) -> None:
+        """A night/idle job may be using the GPU: ask it to stop (it saves what it has)."""
+        pid = locks.holder("night")
+        if pid:
+            try:
+                os.kill(pid, signal.SIGUSR1)
+                self.say_line(f"  (asked the background job {pid} to stop: the GPU is yours)")
+            except ProcessLookupError:
+                pass
+
+    # -- output -------------------------------------------------------------------------
+    def say_line(self, text: str) -> None:
+        """A terminal line (kept short in web mode, where the browser shows everything)."""
+        print(text, flush=True)
+
+    def note(self, text: str, terminal: str | None = None) -> None:
+        self.bus.publish("note", text=text)
+        if not self.web or terminal:
+            self.say_line(terminal or f"  ({text})")
+
+    def _on_say(self, text: str) -> None:
+        self.bus.publish("say", text=text)
+        if not self.web:
+            self.say_line(f"  {self.s.display_name}: {text}")
+
+    def _on_turn(self, rec: dict) -> None:
+        llm, tm = rec.get("llm") or {}, rec.get("timing") or {}
+        summ = {"turn": rec.get("turn"), "user": rec.get("user_text"), "reply": rec.get("reply_spoken"),
+                "mode": rec.get("mode"), "timing": tm, "stt_s": (rec.get("stt") or {}).get("secs"),
+                "llm": {k: llm.get(k) for k in ("model", "ttft_s", "prompt_eval_s", "prompt_tokens", "tok_s",
+                                                 "tokens", "load_s", "done_reason")},
+                "tts": {k: (rec.get("tts") or {}).get(k) for k in ("engine", "first_chunk_gen_s", "gen_s", "audio_s")},
+                "barge_in": rec.get("barge_in"), "cancelled": rec.get("cancelled"), "error": rec.get("error"),
+                "tools": [x.get("name") for x in rec.get("tools") or []],
+                "words": len((rec.get("reply_spoken") or "").split())}
+        self.recent = (self.recent + [summ])[-40:]
+        self.bus.publish("turn", **summ)
 
     # -- audio events -------------------------------------------------------------------
     #
@@ -177,8 +240,9 @@ class Session:
     def _on_speech_start(self) -> None:
         if self.mode != "vad":
             return
-        if self.ui is None:
-            print("  ● hearing you...", flush=True)
+        self.bus.publish("hearing")
+        if not self.web:
+            self.say_line("  ● hearing you...")
         p = self.player
         playing = p is not None and p.active and p.stats.t_first_audio is not None
         if playing:
@@ -219,6 +283,11 @@ class Session:
                     else:
                         self._handle_audio(payload)
                 elif kind == "text":
+                    fb = feedback_command(payload)
+                    if fb:
+                        self.bus.publish("rated", value=fb, turn=self.conv.turn_no)
+                    else:
+                        self.bus.publish("user", text=payload, typed=True)
                     self.conv.respond(payload, mode="text", speak=self.speak)
             except Exception as e:
                 log.exception("turn failed: %s", e)
@@ -258,20 +327,17 @@ class Session:
             peak = 20 * np.log10(float(np.max(np.abs(a))) + 1e-9) if len(a) else -120
             why = f'whisper heard "{tr.text}"' if tr.text else "whisper heard no words"
             hint = "  -> your mic is very quiet or the wrong device: run `iris mic`" if peak < -30 else ""
-            if self.ui:
-                self.ui.note("(didn't catch that)" if peak >= -30 else "(mic is very quiet: try `iris mic`)")
-            else:
-                print(f"  (heard nothing useful: {why}, loudest {peak:.0f} dB, "
-                      f"no-speech {tr.no_speech_prob if tr.no_speech_prob is not None else '?'}){hint}", flush=True)
+            self.bus.publish("note", text="didn't catch that" if peak >= -30 else "mic is very quiet: try `iris mic`")
+            if not self.web:
+                self.say_line(f"  (heard nothing useful: {why}, loudest {peak:.0f} dB, "
+                              f"no-speech {tr.no_speech_prob if tr.no_speech_prob is not None else '?'}){hint}")
             return
         if is_filler(tr.text):           # "Um." / "Mm." alone: the user is thinking, keep listening
             self._mark_handled(utt.includes)
             self.writer.turn({"turn": None, "mode": utt.method, "audio_in": audio_rel, "user_text": tr.text,
                               "stt": tr.as_dict(), "endpoint": endpoint, "filler": True})
-            if self.ui:
-                self.ui.note(f"({tr.text.strip()} ... listening)")
-            else:
-                print(f"  (heard \"{tr.text.strip()}\": listening on)", flush=True)
+            self.note(f"{tr.text.strip()} ... listening", terminal=None if self.web else
+                      f"  (heard \"{tr.text.strip()}\": listening on)")
             return
         text = tr.text
         if self.wake and utt.method == "vad":
@@ -283,16 +349,16 @@ class Session:
                 return
             if rest is not None:
                 text = rest
+                self.bus.publish("wake")
                 if not re.search(r"\w", text):        # just "Iris": say yes and listen
                     self._mark_handled(utt.includes)
                     self.awake_until = time.perf_counter() + self.follow_up_s
                     self.conv._say_simple(str(self.s.persona.get("wake_ack") or "Yes?"), self.speak)
                     self.awake_until = time.perf_counter() + self.follow_up_s
                     return
-        if self.ui:
-            self.ui.user_said(text)
-        else:
-            print(f"  you: {text}", flush=True)
+        self.bus.publish("user", text=text, stt_s=round(stt_done, 2))
+        if not self.web:
+            self.say_line(f"  you: {text}")
         res = self.conv.respond(text, mode=utt.method, t_end=utt.t_end, stt=tr.as_dict(),
                                 endpoint=endpoint, audio_in=audio_rel, stt_done_s=stt_done, speak=self.speak)
         if res.cancelled != "resume":
@@ -314,10 +380,9 @@ class Session:
         label = {"web_search": "searching the web", "calculator": "calculating", "current_time": "checking the time"}
         msg = f"{label.get(name, name)}{': ' + str(what) if what else ''}"
         self.writer.event("tool", name=name, args=args)
-        if self.ui:
-            self.ui.note(msg + " ...")
-        else:
-            print(f"  ({msg})", flush=True)
+        self.bus.publish("tool", name=name, label=msg)
+        if not self.web:
+            self.say_line(f"  ({msg})")
 
     def asleep(self) -> bool:
         return self.wake and time.perf_counter() > self.awake_until and not self.busy_job \
@@ -356,8 +421,9 @@ class Session:
             self.recorder.ptt_up()
         else:
             self.recorder.ptt_toggle()
-        if self.recorder.recording and self.ui is None:
-            print("  ● listening... (Enter to stop)", flush=True)
+        self.bus.publish("ptt", recording=bool(self.recorder.recording))
+        if self.recorder.recording and not self.web:
+            self.say_line("  ● listening... (Enter to stop)")
 
     def _socket_server(self) -> None:
         path = paths.socket_path()
@@ -381,13 +447,14 @@ class Session:
                 self.conv.interrupt("barge_in")
             elif msg in ("good", "bad") and self.conv:
                 self.conv.writer.feedback(self.conv.turn_no, msg, source="hotkey")
+                self.bus.publish("rated", value=msg, turn=self.conv.turn_no)
             elif msg == "quit":
                 self.running = False
         srv.close()
 
-    # -- full-screen face (--ui) ---------------------------------------------------------
+    # -- state for UIs --------------------------------------------------------------------
     def probe(self) -> tuple[str, float]:
-        """What the eye should show right now, and how loud."""
+        """What the face should show right now, and how loud."""
         p, r = self.player, self.recorder
         if p is not None and p.active and p.stats.t_first_audio is not None:
             return "speaking", p.level
@@ -399,91 +466,134 @@ class Session:
             return "asleep", 0.0
         return "idle", 0.0
 
-    def _quiet_logs(self) -> None:
-        """Logs (and C libraries writing to stderr) would tear the picture: send them to a file."""
-        import logging
-        f = paths.logs_dir() / "talk-ui.log"
-        root = logging.getLogger()
-        for h in list(root.handlers):
-            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
-                root.removeHandler(h)
-        fh = logging.FileHandler(f)
-        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname).1s %(name)s: %(message)s", "%H:%M:%S"))
-        root.addHandler(fh)
-        if root.level == logging.NOTSET or root.level > logging.INFO:
-            root.setLevel(logging.INFO)
-        self._stderr_saved = os.dup(2)
-        self._stderr_file = open(f, "a")
-        os.dup2(self._stderr_file.fileno(), 2)
+    def levels(self) -> tuple[float, float]:
+        r, p = self.recorder, self.player
+        return (float(getattr(r, "level", 0.0)) if r is not None else 0.0,
+                float(p.level) if p is not None and p.active else 0.0)
 
-    def _restore_stderr(self) -> None:
-        if getattr(self, "_stderr_saved", None) is not None:
-            os.dup2(self._stderr_saved, 2)
-            os.close(self._stderr_saved)
-            self._stderr_saved = None
+    def _ticker(self, hz: float = 30.0) -> None:
+        """State and loudness for the face, only while someone is watching and something changed."""
+        last = None
+        while self.running:
+            time.sleep(1 / hz)
+            if not self.bus.subscribers:
+                continue
+            state, _ = self.probe()
+            mic, out = self.levels()
+            cur = (state, round(mic, 2), round(out, 2))
+            if cur != last:
+                self.bus.publish("state", state=state, mic=cur[1], out=cur[2])
+                last = cur
 
-    def run_ui(self) -> None:
-        from .ui import EyeUI, Keys
+    def info(self) -> dict:
+        tools = list(self.conv.tools) if self.conv else []
+        return {"name": self.s.display_name, "persona": self.s.persona_name, "agent": paths.agent(),
+                "session": self.writer.session, "mode": self.mode, "headset": bool(self.headset),
+                "wake": self.wake, "wake_words": self.wake_words, "listen": self.recorder is not None,
+                "speak": self.speak, "tools": tools,
+                "native_tools": bool(self.conv and self.conv.tools_native()),
+                "models": {"llm": self.llm.model, "stt": self.stt.name if self.stt else None,
+                           "tts": self.engine if self.speak else None},
+                "llm_url": self.llm.url, "turns": self.recent}
+
+    def command(self, cmd: dict) -> dict:
+        """Commands from the web UI. Returns {"ok": ..., ...}."""
+        from . import jobs, lists, voicefx
+        c = str(cmd.get("cmd") or "")
+        conv = self.conv
+        if c == "text":
+            text = str(cmd.get("text") or "").strip()
+            if text:
+                self.jobs.put(("text", text))
+            return {"ok": bool(text)}
+        if c == "interrupt":
+            return {"ok": bool(conv and conv.interrupt("barge_in"))}
+        if c == "ptt":
+            if conv and conv.busy() and not (self.recorder and self.recorder.recording):
+                conv.interrupt("barge_in")
+                return {"ok": True, "interrupted": True}
+            self.ptt(str(cmd.get("action") or "toggle"))
+            return {"ok": self.recorder is not None}
+        if c == "rate":
+            v = str(cmd.get("value"))
+            if v not in ("good", "ok", "bad") or not conv or not conv.turn_no:
+                return {"ok": False}
+            turn = int(cmd.get("turn") or conv.turn_no)
+            self.writer.feedback(turn, v, source="ui", note=cmd.get("note") or None)
+            self.bus.publish("rated", value=v, turn=turn)
+            return {"ok": True}
+        if c == "mode":
+            m = cmd.get("mode") or ("ptt" if self.mode == "vad" else "vad")
+            if self.recorder and m in ("vad", "ptt"):
+                if self.recorder.recording:
+                    self.recorder.recording = False
+                    self.recorder.ptt_buf = []
+                self.mode = self.recorder.mode = m
+            self.bus.publish("info", **self.info())
+            return {"ok": True, "mode": self.mode}
+        if c == "wake":
+            self.wake = bool(cmd.get("on", not self.wake))
+            self.bus.publish("info", **self.info())
+            return {"ok": True, "wake": self.wake}
+        if c == "knob":
+            new = voicefx.set_knob(self.s, str(cmd.get("name")), float(cmd.get("value")),
+                                   conv.voice_history if conv else None)
+            return {"ok": True, "value": new}
+        if c == "list_add":
+            item = lists.add(str(cmd.get("text") or ""), str(cmd.get("list") or "todo"), source="ui",
+                             session=self.writer.session)
+            self.bus.publish("lists")
+            return {"ok": item is not None, "item": item}
+        if c in ("list_done", "list_drop"):
+            item = lists.set_status(int(cmd.get("id")), "done" if c == "list_done" else "dropped", cmd.get("note"))
+            self.bus.publish("lists")
+            return {"ok": item is not None}
+        if c == "jobs":
+            act = cmd.get("action")
+            if act == "pause":
+                jobs.pause(jobs.parse_duration(cmd.get("for")))
+            elif act == "resume":
+                jobs.resume()
+            elif act == "stop":
+                jobs.stop(timeout=5)
+            return {"ok": True, "jobs": jobs.status()}
+        if c == "quit":
+            if conv and conv.busy():
+                conv.interrupt("quit")
+            self.running = False
+            return {"ok": True}
+        return {"ok": False, "error": f"unknown command {c!r}"}
+
+    def run_web(self) -> None:
+        from .web.server import WebServer
         with locks.hold("live"):
             self.boot()
-            self._quiet_logs()
-            hint = ("talk over IRIS to interrupt · t type · + = - rate · q quit" if self.headset
-                    else "Enter interrupt · t type · + = - rate · q quit")
-            self.ui = EyeUI(name=self.s.display_name, probe=self.probe, hint=hint)
-            if self.player is not None:
-                self.player.on_chunk_start = self.ui.agent_chunk
-            self.ui.start()
+            self.server = WebServer(self, port=self.port)
+            url = self.server.start()
+            threading.Thread(target=self._ticker, daemon=True).start()
+            self.say_line(f"\n  {self.s.display_name} is up: {url}\n  (Ctrl+C here or 'quit' in the page ends the session)")
+            if self.open_browser:
+                from .web.server import open_browser
+                open_browser(url, self.s)
             try:
                 greeting = self.s.persona.get("greeting")
                 if greeting and self.speak:
                     self.conv._say_simple(greeting, True)
-                with Keys() as keys:
-                    while self.running:
-                        ch = keys.read(0.1)
-                        if ch is None:
-                            continue
-                        if self.ui.typing is not None:           # typing a message
-                            if ch in ("\n", "\r"):
-                                text, self.ui.typing = self.ui.typing.strip(), None
-                                if text:
-                                    self.ui.user_said(text)
-                                    self.jobs.put(("text", text))
-                            elif ch == "\x1b":
-                                self.ui.typing = None
-                            elif ch in ("\x7f", "\b"):
-                                self.ui.typing = self.ui.typing[:-1]
-                            elif ch.isprintable():
-                                self.ui.typing += ch
-                            continue
-                        if ch in ("q", "Q"):
-                            if self.conv and self.conv.busy():
-                                self.conv.interrupt("quit")
-                            self.drain(10)
-                            break
-                        if ch in ("\n", "\r", " "):
-                            if self.conv and self.conv.busy():
-                                self.conv.interrupt("barge_in")
-                            elif self.mode == "ptt":
-                                self.ptt("toggle")
-                        elif ch in ("t", "T"):
-                            self.ui.typing = ""
-                        elif ch in ("+", "=", "-"):
-                            self.jobs.put(("text", ch))
-                            self.ui.note({"+": "rated good", "=": "rated okay", "-": "rated bad"}[ch])
-                        elif ch in ("m", "M") and self.recorder:
-                            self.mode = self.recorder.mode = "ptt" if self.mode == "vad" else "vad"
-                            self.ui.note("hands-free" if self.mode == "vad" else "push-to-talk: Space to talk")
+                while self.running:
+                    time.sleep(0.2)
+                self.drain(10)
             except KeyboardInterrupt:
                 pass
             finally:
-                self.ui.stop()
-                self._restore_stderr()
+                self.bus.publish("bye")
+                time.sleep(0.2)
+                self.server.stop()
                 self.shutdown()
 
     # -- terminal -----------------------------------------------------------------------
     def run(self) -> None:
-        if self.want_ui:
-            return self.run_ui()
+        if self.web:
+            return self.run_web()
         with locks.hold("live"):
             self.boot()
             hint = "Enter = talk/stop, or type a message" if self.listen else "type a message"

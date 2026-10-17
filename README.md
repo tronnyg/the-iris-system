@@ -1,6 +1,8 @@
 # The IRIS system
 
-A fully local voice assistant that improves itself without retraining any model.
+A fully local voice assistant that improves itself without retraining any model, and without
+sending anything anywhere: the local loops measure and write down what they notice; when you
+want real changes, you run Claude Code on this repo and it builds them from that data.
 
 ```
 microphone -> Whisper (CPU) -> local LLM via Ollama (GPU) -> sanitizer -> sentence splitter -> voice (Kokoro or Chatterbox) -> speaker
@@ -50,7 +52,7 @@ morning, you can already talk to it.
 iris report --open     # what happened overnight: baseline evals, voice samples, problems
 iris doctor            # every part checked; FAIL lines say exactly what to fix
 iris rate              # blind A/B listening test: Kokoro vs Chatterbox
-iris talk              # talk! Enter = start/stop speaking, Enter while it talks = interrupt
+iris talk --ui         # talk, with the web UI in your browser (or plain `iris talk` in the terminal)
 ```
 
 While talking:
@@ -61,6 +63,7 @@ While talking:
 | type a message + Enter | typed message instead of speech |
 | say "good answer" / "bad answer" (optionally followed by why: "bad answer, too long"), or type `+` / `-` | rate the last reply (the strongest learning signal) |
 | say "remember that ..." / "forget that ..." | memory, written immediately |
+| say "add ... to my feature list" / "put ... on my todo list" / "what's on my improvement list?" | your lists (todo, features, improvements): what the next Claude Code session builds |
 | `/vad` / `/ptt` | hands-free mode / back to push-to-talk |
 | `/q` | quit; a short reflection runs and updates memory |
 
@@ -72,16 +75,29 @@ While talking:
 
 With a headset add `--headset` (or `audio: {headset: true}` in pod.yaml): IRIS keeps listening while she talks, so you can just talk over her to interrupt. With speakers leave it off, or she'd hear herself.
 
-Other ways in: `iris talk --ui` (full-screen animated iris with live captions, hands-free; keys: Enter/Space interrupt, `t` type, `+ = -` rate, `m` hands-free/push-to-talk, `q` quit; preview it with `iris eye`), `iris talk --vad` (hands-free from the start), `iris chat` (typed, spoken replies),
+**Web UI** (`iris talk --ui`, or `iris ui`): opens in your browser (local only, per-session token).
+An ASCII neural-network face with two eyes and an oscilloscope mouth that blink, look around and
+react to listening / thinking / speaking; live transcript (dim while generated, bright as spoken)
+with one-click ratings; a per-turn latency waterfall (STT / LLM / generation / TTS / playback)
+against your target; vitals vs targets; GPU and Ollama status; your lists; findings; voice
+sliders; background-job controls; the morning report. Keys: Space/Enter talk or interrupt, `t`
+type, `m` hands-free/push-to-talk, `+ = -` rate. Preview without models: `iris eye`. Open it in
+an app window with `ui: {browser_cmd: "chromium --app={url}"}` in pod.yaml.
+
+Other ways in: `iris talk --vad` (hands-free, terminal), `iris chat` (typed, spoken replies),
 `iris chat --silent` (text only), `iris say "some text" --engine chatterbox` (hear a voice).
 
 Global hotkey on Hyprland: see [scripts/hyprland-ptt.conf](scripts/hyprland-ptt.conf)
 (hold SUPER+F12 to talk from any window while `iris talk` runs in a terminal).
 
-**Make it nightly:** `./setup.sh --timer` runs the improvement loop every night at 03:00
-(the PC has to be on). Or run `iris night` yourself whenever you stop for the day.
+**Background learning:** `iris jobs enable` installs two user timers: the full night loop at
+03:00, and a short idle-time job every 30 min that only runs after 10 quiet minutes and stops the
+moment you start talking. `iris jobs pause [--for 2h]`, `iris jobs resume`, `iris jobs stop`,
+`iris jobs disable`; `iris off` stops everything IRIS is running (session, jobs, its Ollama).
+Or run `iris night` yourself whenever you stop for the day.
 
-**Each morning after:** `iris report --open`, then `iris review` for anything waiting for approval.
+**Each morning after:** `iris report --open`; when you want IRIS improved, see *Improving IRIS with
+Claude Code* below.
 
 ---
 
@@ -93,15 +109,16 @@ Three loops, on three time scales (details in [docs/ARCHITECTURE.md](docs/ARCHIT
 |---|---|---|
 | Live | while you talk | records a trace of every turn (timings, transcripts, interruptions, ratings); writes "remember that" notes instantly |
 | Sleep | when a session ends | reflects on the conversation: facts about you, behaviour lessons, a session summary; turns bad moments into regression tests |
-| Night | `iris night` / 03:00 | grades the day with bigger models, tunes settings within bounds, proposes prompt edits, compares voices, scouts for new models and versions, writes the morning report |
+| Idle | every 30 min when you're away | judges new turns, refreshes findings, a quick benchmark; yields to you |
+| Night | `iris night` / 03:00 | grades the day with bigger models, tunes settings within bounds, tries prompt edits against the evals, compares voices, benchmarks models and Ollama settings, scouts new versions, records findings, writes the morning report |
 
 What it may change on its own, and what waits for you, is set in the agent's `policy.yaml`:
 
 | Tier | Examples | How it ships |
 |---|---|---|
 | **auto** | memory, lessons, regression tests, pronunciation rules, silence timeout, reply length, Whisper size | applied, committed, listed in the report, **reverted automatically if the targeted metric gets worse** |
-| **approve** | persona prompt edits, voice engine swap, LLM swap, code changes | prepared and tested overnight on a branch; ships only on `iris approve <id>` |
-| **recommend** | package updates, new Ollama versions, trending models | researched (and benchmarked if already downloaded); you act |
+| **findings** | persona prompt edits (with the eval gate's evidence), voice swap, LLM swap, Ollama settings, code changes | measured and written down (`iris findings`, `iris dossier`); built by you or a Claude Code session |
+| **recommend** | package updates, new Ollama versions, trending models | researched (and benchmarked if already downloaded); recorded as findings |
 | **locked** | `policy.yaml`, `agent.yaml`, your golden evals | never touched by the loops |
 
 Every change is a git commit in the agent's self store (`~/.local/share/iris/agents/iris/self`):
@@ -109,34 +126,42 @@ Every change is a git commit in the agent's self store (`~/.local/share/iris/age
 ```bash
 iris log              # history of changes, automatic ones tagged [auto]
 iris rollback         # undo the latest automatic change
-iris review           # proposals waiting for you (with the gate's evidence and a diff)
-iris approve <id>     # ship one
-iris reject <id>      # drop one
+iris findings         # what the loops noticed, most recurring first
+iris list             # your lists
 ```
 
-### Escalation to Claude (optional, uses your Claude subscription)
+### Improving IRIS with Claude Code
 
-The last night stage hands the evidence (metrics, transcripts, eval results, what the
-local stages changed) to Claude Code running headless (`claude -p --model claude-opus-5-5`).
-It writes an analysis for the morning report and may propose:
+IRIS never calls a cloud model. The local model is good at measuring and weak at engineering,
+so the split is:
 
-- **self changes** (persona, pod settings, pronunciation, lessons) as one proposal branch,
-  with the eval gate run on it: `iris review claude-...`, `iris approve claude-...`
-- **code changes** on a branch of this repo with the tests run: `iris review code-...`,
-  `iris approve code-...` (merges into main)
+- **IRIS collects** (locally, in the background): your lists, ratings, conversation traces,
+  metrics vs targets, judge scores, eval failures, benchmarks (models, tool choice, Ollama
+  settings), capability gaps, and the local model's own ideas (marked as hints).
+- **You decide when to improve:** open Claude Code in this repo and run `/improve`. It runs
+  `iris dossier` (everything above as markdown in `.iris/dossier/`), reads `docs/ROADMAP.md`,
+  picks the most valuable items (your lists first), implements them on a branch with tests, and
+  marks them done (`iris list done <id> --note <commit>`, `iris findings done <id>`). That covers
+  code, prompts, tools, models (`iris set model llm ...`) and IRIS's Ollama settings
+  (`iris ollama set OLLAMA_FLASH_ATTENTION 1`): all of it, from your data.
 
-It never edits `policy.yaml`, `agent.yaml` or your golden evals (it can suggest golden
-cases in a file). Requirements: Claude Code installed and logged in once (`claude`).
-An `ANTHROPIC_API_KEY` in the environment is ignored, so it uses the subscription, not the
-API. Transcripts and settings are sent to Anthropic; audio is not. It skips nights with
-nothing new. Turn it off with `escalation: {enabled: false}` in policy.yaml. Run it alone:
-`iris night --only escalate`.
+Nothing leaves the machine unless you run Claude Code yourself (it reads the dossier, which
+contains transcripts but never audio).
+
+### IRIS's own Ollama
+
+IRIS starts a private `ollama serve` on 127.0.0.1:11435 when it needs one and stops it after.
+It reads the models you already downloaded (read-only, nothing duplicated), but its settings are
+its own (`pods/brain/ollama.yaml` in the self store), so tuning it never changes Ollama for
+anything else on this machine. `iris ollama status | set | profile | restart | stop`.
+`mode: external` in that file uses the system Ollama instead. Pull models as usual
+(`ollama pull ...`); IRIS sees them.
 
 ## Swapping parts
 
 | Part | How |
 |---|---|
-| LLM | `ollama pull <model>` then `iris set model llm <model>` (or list it under `scout.ollama_candidates` in policy.yaml and let the night loop benchmark it for you) |
+| LLM | `ollama pull <model>` then `iris set model llm <model>` (or list it under `scout.ollama_candidates` in policy.yaml and let the night loop benchmark it for you); per-model request options with `iris ollama profile <model> num_batch 256` |
 | Voice | `iris set model tts_engine chatterbox`; voice mix in `pods/voice/pod.yaml` (`tts.kokoro.voice`, e.g. `af_heart:60,bf_emma:40`); clone a voice with `tts.chatterbox.reference: /path/to/clip.wav` (over 5 s) |
 | Ears | `iris set model stt small.en` (the night loop also picks the best installed size by itself) |
 | Persona | `iris persona list`, `iris persona use plain`, `iris persona add <name> --file my.yaml` |
@@ -147,8 +172,14 @@ nothing new. Turn it off with `escalation: {enabled: false}` in policy.yaml. Run
 
 ```
 iris talk | chat | say | ptt          talk, type, test a voice, hotkey control
+iris ui                              talk with the web UI (= iris talk --ui); iris eye previews it
 iris sleep | night | report           run the loops by hand, open the report
-iris review | approve | reject        proposals
+iris list [name] | add | done | drop  your lists (todo / features / improvements)
+iris findings | dossier               what the loops noticed; the handoff for Claude Code
+iris jobs status|pause|resume|stop|enable|disable|idle    background learning
+iris ollama status|set|profile|restart|stop|bench         IRIS's own Ollama
+iris off                              stop everything IRIS runs
+iris review | approve | reject        older proposals
 iris rollback | log                   history
 iris rate                             blind voice comparison
 iris status | doctor | metrics | evals
@@ -163,6 +194,8 @@ iris agent list|new
 ~/the-iris-system/                 this repo: the system (code), shared by all agents
   .venvs/{core,kokoro,chatterbox}  one Python env per part (their dependencies clash)
   self_template/                   what a new agent starts from
+  .iris/dossier/                   the improvement dossier (iris dossier; gitignored)
+  docs/ROADMAP.md                  researched improvement backlog for Claude Code sessions
 ~/.local/share/iris/
   agents/<name>/self/              the agent's self store (git): persona, memory, settings, evals
   agents/<name>/traces/            what happened, turn by turn (JSON lines)
@@ -174,7 +207,7 @@ iris agent list|new
 ## Known limits (honest list)
 
 - Small local models follow format rules worse than Claude did. The sanitizer removes whatever slips through and counts it; the night loop works on reducing it.
-- The judge and prompt editor are local models too (qwen3:8b by default). A bigger judge is better; it only runs at night, so it can be slow. Code changes come from the optional Claude escalation stage (or a local coding agent via `code_agent.command`); either way they wait on a branch for you.
+- The judge and prompt editor are local models too (qwen3:8b by default). A bigger judge is better; it only runs at night, so it can be slow. Their ideas are recorded as hints; code, prompt and model changes are made in a Claude Code session you start.
 - Whisper can't tell you *how* it misheard; the overnight teacher model isn't perfect either. The report lists disagreements to spot-check.
 - Only you can judge how natural a voice sounds. `iris rate` exists because no metric can.
 - Echo: hands-free mode ignores the mic while speaking (half-duplex). Interrupt with Enter or the hotkey. Headphones work best.

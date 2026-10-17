@@ -20,7 +20,8 @@ surfaces:
   pods/voice/pronunciations.yaml: auto
   pods/voice/pod.yaml: per-knob     # each knob in pod.yaml declares its own tier
   persona/: approve                 # the active persona file (prompt, cue rules, delivery)
-  code: approve                     # code changes always need you
+  code: approve                     # code changes: you / a Claude Code session on the repo
+  pods/brain/ollama.yaml: approve   # IRIS's Ollama settings: never changed by the loops
   models: recommend                 # new models / packages / versions
   agent.yaml: locked                # which persona this agent wears
   policy.yaml: locked
@@ -61,24 +62,18 @@ scout:
   pypi_packages: [faster-whisper, kokoro, misaki, chatterbox-tts, ctranslate2]
   hf_tasks: [text-to-speech, automatic-speech-recognition]
 
-escalation:
-  # After the local stages, hand tonight's evidence (metrics, transcripts, evals, what the
-  # night changed) to Claude Code running headless on your subscription. It writes an
-  # analysis for the morning report and proposes self/code changes, which you approve.
-  # Transcripts and settings are sent to Anthropic; audio never leaves the machine.
-  # Defaults apply when this block is missing. Set enabled: false to keep everything local.
-  enabled: true
-  command: claude
-  model: claude-opus-5-5
-  max_minutes: 60
-  min_new_turns: 1           # skip nights with no new conversations (unless evals fail)
-  code_changes: true         # false = only persona/settings/memory proposals
+jobs:
+  # Background learning (see iris/jobs.py). Timers are installed only by `iris jobs enable`.
+  idle_enabled: true
+  idle_after_minutes: 10      # an idle job starts only if you haven't talked for this long
+  idle_budget_minutes: 15
 
-code_agent:
-  # Optional: a local coding agent that drafts code fixes for failure clusters on a
-  # branch of the code repo. Disabled by default (small local models are weak engineers).
-  # Example: "aider --model ollama_chat/qwen2.5-coder:7b --yes --message-file {brief}"
-  command: null
+bench:
+  ollama_configs: true        # nightly: compare Ollama server settings on a throwaway instance
+
+# Improving the code, prompts, models and Ollama settings is done by you or a Claude Code
+# session on the repo (`iris dossier`, then /improve). The loops here only measure and
+# record findings; nothing is sent anywhere.
 
 privacy:
   keep_audio_days: 14

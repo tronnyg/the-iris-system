@@ -37,23 +37,8 @@ def _trend(name: str, new, old) -> str:
     return ("better" if good else "worse")
 
 
-def code_proposals() -> list[dict]:
-    """Code-repo branches waiting for you (from the escalation stage)."""
-    out = []
-    d = paths.proposals_dir()
-    for f in sorted(d.glob("code_*.json")) if d.exists() else []:
-        if f.name.endswith((".approved.json", ".rejected.json")):
-            continue
-        ev = read_json(f, {}) or {}
-        if ev.get("kind") == "code":
-            out.append({"branch": ev["branch"], "id": ev["id"], "title": ev.get("title", ev["id"]),
-                        "change": ev.get("change", "") + (f" Tests: {ev['tests']}" if ev.get("tests") else ""),
-                        "gate": None, "kind": "code", "file": str(f)})
-    return out
-
-
 def pending_proposals() -> list[dict]:
-    out = code_proposals()
+    out = []
     try:
         branches = selfstore.proposals()
     except Exception:
@@ -105,27 +90,26 @@ def build(r: dict) -> tuple[str, list[dict]]:
     md += [f"- {a}" for a in auto] or ["- Nothing changed."]
     md.append("\nUndo the latest automatic change with `iris rollback`; see all with `iris log`.")
 
-    md += ["", "## Waiting for you (approve tier)", ""]
     props = pending_proposals()
-    for p in props:
-        g = p.get("gate") or {}
-        ev = f" Gate: fixes {len(g.get('fixes', []))}, breaks {len(g.get('breaks', []))}." if g else ""
-        md.append(f"- **{p['title']}** (`{p['id']}`).{ev} {p['change']}")
     if props:
+        md += ["", "## Waiting for you (older proposals)", ""]
+        for p in props:
+            g = p.get("gate") or {}
+            ev = f" Gate: fixes {len(g.get('fixes', []))}, breaks {len(g.get('breaks', []))}." if g else ""
+            md.append(f"- **{p['title']}** (`{p['id']}`).{ev} {p['change']}")
         md.append("\nReview with `iris review`, then `iris approve <id>` or `iris reject <id>`.")
-    else:
-        md.append("- Nothing pending.")
     try:
-        from .sleep import open_requests
-        reqs = open_requests()
+        from .. import lists
+        mine = lists.items(statuses=("open", "suggested"))
     except Exception:
-        reqs = []
-    if reqs:
-        md += ["", "## Your requests (things you asked IRIS for)", ""]
-        md += [f"- {r['text']}" for r in reqs[-15:]]
-        md.append("\nThe Claude escalation sees these too. Close one with `iris requests --close <n>`.")
+        mine = []
+    if mine:
+        md += ["", "## Your lists", ""]
+        md += [f"- [{r['id']}] {r['list']}{' (suggested)' if r.get('status') == 'suggested' else ''}: {r['text']}"
+               for r in mine[-20:]]
+        md.append("\nAdd by saying \"add ... to my feature list\"; see all with `iris list`.")
     pr = res("prompt")
-    if pr.get("tried") and not pr.get("proposal"):
+    if pr.get("tried") and not pr.get("finding"):
         md.append(f"\nTried {len(pr['tried'])} prompt edit(s) tonight; none passed the gate: "
                   + "; ".join(t["reason"] for t in pr["tried"]))
 
@@ -185,42 +169,18 @@ def build(r: dict) -> tuple[str, list[dict]]:
         for x in sc.get("models", [])[:12]:
             md.append(f"- New/trending {x['task']}: [{x['name']}]({x['url']}) ({x.get('likes')} likes)")
 
-    code = res("code")
-    if code.get("briefs"):
-        md += ["", "## Code briefs (code changes always need you)", ""]
-        for b in code["briefs"]:
-            md.append(f"- {b['title']} ({b['count']})")
-        if code.get("agent"):
-            md.append(f"\nCoding agent draft: {json.dumps(code['agent'])[:400]}")
-
-    esc = res("escalate")
-    if esc and not esc.get("skipped"):
-        md += ["", "## Escalation (Claude)", ""]
-        cl = esc.get("claude") or {}
-        if cl.get("error"):
-            md.append(f"- Claude run failed: {cl['error']}")
-        if esc.get("analysis"):
-            text = Path(esc["analysis"]).read_text().strip() if Path(esc["analysis"]).exists() else ""
-            md += [ln.replace("# ", "### ", 1) if ln.startswith("#") else ln for ln in text.splitlines()[:80]]
-            md.append(f"\nFull analysis: `{esc['analysis']}`")
-        elif cl.get("result"):
-            md.append(cl["result"][:1500])
-        if (esc.get("self") or {}).get("proposal"):
-            g = esc["self"].get("gate") or {}
-            md.append(f"\n- Self changes proposed as `{esc['self']['proposal'].split('/', 1)[1]}`"
-                      + (f" (gate: {g.get('reason')})" if g else ""))
-        if esc.get("code"):
-            c = esc["code"]
-            md.append(f"- Code changes on branch `{c['branch']}`: tests {'pass' if c['tests_passed'] else 'FAIL'}"
-                      f" ({c['tests']}). Review: `iris review {c['id']}`")
-        if esc.get("refused_self_paths"):
-            md.append(f"- Ignored edits to locked or out-of-scope files: {', '.join(esc['refused_self_paths'])}")
-        if esc.get("suggested_golden"):
-            md.append(f"- Suggested golden evals for you to consider: `{esc['suggested_golden']}`")
-        if cl.get("secs"):
-            md.append(f"- Took {round(cl['secs'] / 60, 1)} min.")
-    elif esc.get("skipped"):
-        md += ["", f"Escalation skipped: {esc['skipped']}."]
+    try:
+        from . import insights
+        open_f = insights.ranked(insights.findings())
+    except Exception:
+        open_f = []
+    if open_f:
+        md += ["", "## Findings (for the next improvement session)", ""]
+        for f in open_f[:12]:
+            hint = " _(local model's idea)_" if f.get("source") == "local-model" else ""
+            md.append(f"- F{f['id']} [{f['area']}] {f['title']} (seen {f.get('count', 1)}x){hint}")
+        md.append(f"\n{len(open_f)} open. Build the dossier with `iris dossier`, then run Claude Code on the repo "
+                  "with `/improve` to act on them.")
 
     problems = [f"- `{k}`: {v.get('error') or v.get('why')}" for k, v in st.items()
                 if v.get("status") in ("error", "skipped")]

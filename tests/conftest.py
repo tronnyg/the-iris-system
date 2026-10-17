@@ -12,7 +12,9 @@ def iris_home(tmp_path, monkeypatch):
     monkeypatch.setenv("IRIS_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")   # nothing listens: no real LLM in tests
-    monkeypatch.setenv("IRIS_CLAUDE_COMMAND", "iris-test-no-claude")   # never call the real Claude CLI
+    monkeypatch.setenv("IRIS_OLLAMA", "external")      # never start IRIS's own Ollama in tests
+    monkeypatch.delenv("IRIS_OLLAMA_URL", raising=False)
+    monkeypatch.setenv("IRIS_NOTIFY", "0")             # no desktop notifications
     # Hermetic on a real machine too: no downloaded models, no network (else a test night run
     # loads the real large-v3-turbo and queries PyPI/Hugging Face, and takes many minutes)
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))

@@ -30,5 +30,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["iris*"]
 
+[tool.setuptools.package-data]
+"iris.web" = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

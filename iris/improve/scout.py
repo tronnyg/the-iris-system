@@ -153,7 +153,7 @@ def benchmark_ollama(settings: Settings, judge=None) -> list[dict]:
         better = (s["passed"] >= base["passed"] + 2) or (s["passed"] >= base["passed"] and s["secs"] < base["secs"] * 0.75)
         out.append({"kind": "llm-benchmark", "name": c, "current": current, "base": base, "cand": s,
                     "recommend": bool(better),
-                    "action": f"iris approve <proposal>  (or: iris set model llm {c})"})
+                    "action": f"iris set model llm {c}"})
     return out
 
 

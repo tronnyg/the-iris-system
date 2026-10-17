@@ -1,0 +1,10 @@
+[Unit]
+Description=IRIS idle-time learning (short, yields to conversations)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@IRIS@ jobs idle
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=40min

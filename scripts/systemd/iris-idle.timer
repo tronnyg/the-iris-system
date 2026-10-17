@@ -1,0 +1,10 @@
+[Unit]
+Description=Run IRIS's idle-time learning every 30 minutes (skips itself unless you're away)
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=30min
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

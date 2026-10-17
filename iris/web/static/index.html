@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IRIS</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand"><span class="glyph">◢</span> <b id="name">IRIS</b> <span class="dim" id="persona"></span></div>
+    <div class="chips" id="chips"></div>
+    <div class="right"><span id="conn" class="conn off">○ offline</span> <span id="clock" class="dim"></span></div>
+  </header>
+
+  <section class="panel transcript" aria-label="Conversation">
+    <h2>// dialogue <span class="dim" id="session"></span></h2>
+    <div id="log" class="log" role="log" aria-live="polite"></div>
+    <form id="say" class="say" autocomplete="off">
+      <button type="button" id="ptt" class="btn ptt" title="Space: talk / interrupt">◉ TALK</button>
+      <input id="text" placeholder="type to IRIS  ·  t to focus" aria-label="Message">
+      <button class="btn" type="submit">SEND</button>
+    </form>
+  </section>
+
+  <section class="panel core" aria-label="IRIS">
+    <canvas id="face" aria-hidden="true"></canvas>
+    <div class="state-line">
+      <span id="state" class="state">‹ BOOTING ›</span>
+    </div>
+    <div class="meters">
+      <span>MIC <span id="mic-m" class="meter">░░░░░░░░░░░░</span></span>
+      <span>OUT <span id="out-m" class="meter">░░░░░░░░░░░░</span></span>
+      <span id="tok" class="dim"></span>
+    </div>
+  </section>
+
+  <section class="panel telemetry" aria-label="Telemetry">
+    <h2>// latency <span class="dim">per turn, from end of speech</span></h2>
+    <div id="lat" class="lat"></div>
+    <div class="legend"><i class="k-stt"></i>stt <i class="k-llm"></i>llm <i class="k-gen"></i>gen <i class="k-tts"></i>tts <i class="k-buf"></i>play</div>
+    <h2>// vitals <span class="dim">today vs target</span></h2>
+    <div id="vitals" class="vitals"></div>
+    <h2>// system</h2>
+    <div id="sys" class="kv"></div>
+  </section>
+
+  <section class="panel deck" aria-label="Controls">
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="lists" class="on">LISTS</button>
+      <button role="tab" data-tab="findings">FINDINGS</button>
+      <button role="tab" data-tab="voice">VOICE</button>
+      <button role="tab" data-tab="jobs">JOBS</button>
+      <button role="tab" data-tab="keys">KEYS</button>
+      <a id="report" class="tab-link" target="_blank" rel="noopener">REPORT ↗</a>
+    </nav>
+    <div class="tab" id="tab-lists">
+      <form id="list-add" class="row" autocomplete="off">
+        <select id="list-name" aria-label="List"><option value="todo">todo</option><option value="features">features</option><option value="improvements">improvements</option></select>
+        <input id="list-text" placeholder="add an item (or say: “add … to my feature list”)" aria-label="Item">
+        <button class="btn">ADD</button>
+      </form>
+      <div id="lists" class="cols3"></div>
+    </div>
+    <div class="tab hidden" id="tab-findings"><div id="findings" class="findings"></div></div>
+    <div class="tab hidden" id="tab-voice"><div id="knobs" class="knobs"></div></div>
+    <div class="tab hidden" id="tab-jobs"><div id="jobs" class="kv"></div>
+      <div class="row">
+        <button class="btn" data-jobs="pause" data-for="1h">PAUSE 1H</button>
+        <button class="btn" data-jobs="pause">PAUSE</button>
+        <button class="btn" data-jobs="resume">RESUME</button>
+        <button class="btn warn" data-jobs="stop">STOP NOW</button>
+        <button class="btn" id="mode-btn">HANDS-FREE / PTT</button>
+        <button class="btn" id="wake-btn">WAKE WORD</button>
+        <button class="btn warn" id="quit-btn">END SESSION</button>
+      </div>
+    </div>
+    <div class="tab hidden" id="tab-keys">
+      <pre class="keys">space / enter   talk (push-to-talk) · interrupt while IRIS speaks
+t               type a message           esc   leave the text box
+m               hands-free ⇄ push-to-talk
++  =  -         rate the last reply good / ok / bad
+say             “add … to my feature list” · “what's on my todo list?”
+                “remember that …” · “slower” · “louder” · “good answer”</pre>
+    </div>
+  </section>
+</div>
+<div id="ended" class="ended hidden"><pre>
+ ┌──────────────────────────────┐
+ │   SESSION ENDED              │
+ │   iris talk --ui  to restart │
+ └──────────────────────────────┘</pre></div>
+<script src="face.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

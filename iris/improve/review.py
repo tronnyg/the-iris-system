@@ -10,21 +10,7 @@ from pathlib import Path
 
 from .. import paths, selfstore
 from ..util import append_jsonl, read_json
-from .report import code_proposals, pending_proposals
-
-
-def _code(pid: str) -> dict | None:
-    for c in code_proposals():
-        if c["id"] == pid or (pid.startswith("code") and pid in c["id"]):
-            return c
-    return None
-
-
-def _repo_git(*args: str, check: bool = True) -> str:
-    r = subprocess.run(["git", *args], cwd=paths.REPO, capture_output=True, text=True)
-    if check and r.returncode != 0:
-        raise SystemExit(f"git {' '.join(args)} failed: {r.stderr.strip()}")
-    return r.stdout
+from .report import pending_proposals
 
 
 def _resolve(pid: str) -> str:
@@ -50,11 +36,6 @@ def review(pid: str | None = None) -> None:
             print(f"- {p['id']}: {p['title']}{gate}")
         print("\nShow one: iris review <id>    Ship it: iris approve <id>    Drop it: iris reject <id>")
         return
-    c = _code(pid)
-    if c:
-        print(f"# {c['title']}\n\n{c['change']}\n")
-        print(_repo_git("diff", f"main...{c['branch']}", check=False) or "(no diff)")
-        return
     b = _resolve(pid)
     ev = read_json(paths.proposals_dir() / (b.replace("/", "_") + ".json"), {}) or {}
     print(f"# {ev.get('title', b)}\n")
@@ -69,16 +50,6 @@ def review(pid: str | None = None) -> None:
 
 
 def approve(pid: str) -> None:
-    c = _code(pid)
-    if c:
-        if _repo_git("rev-parse", "--abbrev-ref", "HEAD").strip() != "main":
-            raise SystemExit(f"switch {paths.REPO} to main first (git checkout main)")
-        if _repo_git("status", "--porcelain", "--untracked-files=no").strip():
-            raise SystemExit(f"{paths.REPO} has uncommitted changes; commit or stash them first")
-        _repo_git("merge", "--no-ff", "-m", f"approve {c['id']}: {c['title']}", c["branch"])
-        Path(c["file"]).rename(Path(c["file"]).with_suffix(".approved.json"))
-        print(f"Merged {c['branch']} into main. Restart any running session to use it.")
-        return
     b = _resolve(pid)
     sha = selfstore.approve(b)
     ev = paths.proposals_dir() / (b.replace("/", "_") + ".json")
@@ -88,13 +59,6 @@ def approve(pid: str) -> None:
 
 
 def reject(pid: str, why: str = "") -> None:
-    c = _code(pid)
-    if c:
-        _repo_git("branch", "-D", c["branch"], check=False)
-        Path(c["file"]).rename(Path(c["file"]).with_suffix(".rejected.json"))
-        append_jsonl(paths.state_dir() / "rejections.jsonl", {"ts": time.time(), "branch": c["branch"], "why": why})
-        print(f"Rejected {c['id']}.")
-        return
     b = _resolve(pid)
     selfstore.reject(b)
     ev = paths.proposals_dir() / (b.replace("/", "_") + ".json")

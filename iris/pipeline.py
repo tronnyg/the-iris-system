@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import selfstore
+from . import lists, ollama_ctl, selfstore
 from .config import Settings
 from .llm import Cancel, LLMError, LLMStats, Ollama
 from .memory import Delta, Memory, forget_command, remember_command
@@ -71,6 +71,18 @@ def feedback_command(text: str) -> str | None:
     return None
 
 
+def llm_options(s: Settings, model: str) -> dict:
+    """Request options for a reply: the pod.yaml knobs, then the model's profile on top
+    (pods/brain/ollama.yaml), so a tuned num_batch / num_gpu reaches only IRIS's requests."""
+    opts = {
+        "temperature": float(s.knob("llm.temperature", 0.7)),
+        "num_predict": int(s.knob("llm.num_predict", 220)),
+        "num_ctx": int(s.knob("llm.num_ctx", 4096)),
+    }
+    opts.update(ollama_ctl.profile(s, model))
+    return opts
+
+
 @dataclass
 class TurnResult:
     record: dict
@@ -91,7 +103,10 @@ class Conversation:
                  on_text: Callable[[str], None] | None = None,
                  on_first_audio_queued: Callable[[], None] | None = None,
                  commit_memory: bool = True, tools: dict | None = None,
-                 on_tool: Callable[[str, dict], None] | None = None):
+                 on_tool: Callable[[str, dict], None] | None = None,
+                 on_delta: Callable[[str], None] | None = None,
+                 on_turn: Callable[[dict], None] | None = None,
+                 on_interrupt: Callable[[str], None] | None = None):
         self.s = settings
         self.tools = tools if tools is not None else {}
         self.on_tool = on_tool or (lambda name, args: None)
@@ -103,6 +118,9 @@ class Conversation:
         self.memory = memory or Memory(settings.root)
         self.on_text = on_text or (lambda t: None)
         self.on_first_audio_queued = on_first_audio_queued or (lambda: None)
+        self.on_delta = on_delta or (lambda d: None)          # raw LLM text as it streams (for a UI)
+        self.on_turn = on_turn or (lambda rec: None)          # the finished turn record
+        self.on_interrupt = on_interrupt or (lambda reason: None)
         self.commit_memory = commit_memory
         self.history: list[dict] = []
         self.ctx_start = 0               # first history message still sent to the LLM
@@ -141,6 +159,7 @@ class Conversation:
         live.cancel.set()
         if self.player is not None:
             self.player.flush()
+        self.on_interrupt(reason)
         return True
 
     def context(self, max_turns: int) -> list[dict]:
@@ -168,6 +187,10 @@ class Conversation:
             fb, note = parsed
             self.writer.feedback(self.turn_no, fb, note=note)
             return "Noted. I'll learn from that." if fb == "bad" else "Noted."
+        said = lists.command(text, session=self.writer.session, turn=self.turn_no or None)
+        if said:                        # "add X to my feature list" (before "remember ...")
+            self.writer.event("list", text=text, said=said)
+            return said
         fact = remember_command(text)
         if fact:
             changes = self.memory.apply(Delta([fact], [], [], []),
@@ -214,11 +237,7 @@ class Conversation:
         if self.tools and not native:
             extra.append(tool_mod.text_protocol(self.tools))
         messages[0] = {**messages[0], "content": messages[0]["content"] + "\n\n" + "\n\n".join(extra)}
-        options = {
-            "temperature": float(s.knob("llm.temperature", 0.7)),
-            "num_predict": int(s.knob("llm.num_predict", 220)),
-            "num_ctx": int(s.knob("llm.num_ctx", 4096)),
-        }
+        options = llm_options(s, self.llm.model)
         splitter = SentenceSplitter(min_chunk_chars=int(s.knob("splitter.min_chunk_chars", 60)))
         think = ThinkFilter()
         report = Report()
@@ -296,6 +315,7 @@ class Conversation:
                         timing["first_token"] = time.perf_counter() - t0
                     raw.append(delta)
                     round_raw.append(delta)
+                    self.on_delta(delta)
                     if hold:
                         held += delta
                         st = held.lstrip()
@@ -411,6 +431,10 @@ class Conversation:
         }
         self.writer.turn(rec)
         self.live = None
+        try:
+            self.on_turn(rec)
+        except Exception as e:
+            log.warning("on_turn callback failed: %s", e)
         return TurnResult(record=rec, spoken=spoken, cancelled=cancelled)
 
     def _say_simple(self, text: str, speak: bool) -> None:
