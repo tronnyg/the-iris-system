@@ -147,6 +147,7 @@ install_chatterbox() {
 }
 
 whisper() {  # model name
+  echo "downloading Whisper $1 (no progress bar; watch: du -sh ~/.cache/huggingface/hub)" | tee -a "$LOG"
   run "$CORE" -c "from faster_whisper import WhisperModel; WhisperModel('$1', device='cpu', compute_type='int8'); print('whisper $1 ready')"
 }
 
