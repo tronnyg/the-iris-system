@@ -106,6 +106,24 @@ iris approve <id>     # ship one
 iris reject <id>      # drop one
 ```
 
+### Escalation to Claude (optional, uses your Claude subscription)
+
+The last night stage hands the evidence (metrics, transcripts, eval results, what the
+local stages changed) to Claude Code running headless (`claude -p --model claude-opus-5-5`).
+It writes an analysis for the morning report and may propose:
+
+- **self changes** (persona, pod settings, pronunciation, lessons) as one proposal branch,
+  with the eval gate run on it: `iris review claude-...`, `iris approve claude-...`
+- **code changes** on a branch of this repo with the tests run: `iris review code-...`,
+  `iris approve code-...` (merges into main)
+
+It never edits `policy.yaml`, `agent.yaml` or your golden evals (it can suggest golden
+cases in a file). Requirements: Claude Code installed and logged in once (`claude`).
+An `ANTHROPIC_API_KEY` in the environment is ignored, so it uses the subscription, not the
+API. Transcripts and settings are sent to Anthropic; audio is not. It skips nights with
+nothing new. Turn it off with `escalation: {enabled: false}` in policy.yaml. Run it alone:
+`iris night --only escalate`.
+
 ## Swapping parts
 
 | Part | How |
@@ -148,7 +166,7 @@ iris agent list|new
 ## Known limits (honest list)
 
 - Small local models follow format rules worse than Claude did. The sanitizer removes whatever slips through and counts it; the night loop works on reducing it.
-- The judge and prompt editor are local models too (qwen3:8b by default). A bigger judge is better; it only runs at night, so it can be slow. Code changes are drafted only if you configure a local coding agent (`code_agent.command`); otherwise you get written briefs.
+- The judge and prompt editor are local models too (qwen3:8b by default). A bigger judge is better; it only runs at night, so it can be slow. Code changes come from the optional Claude escalation stage (or a local coding agent via `code_agent.command`); either way they wait on a branch for you.
 - Whisper can't tell you *how* it misheard; the overnight teacher model isn't perfect either. The report lists disagreements to spot-check.
 - Only you can judge how natural a voice sounds. `iris rate` exists because no metric can.
 - Echo: hands-free mode ignores the mic while speaking (half-duplex). Interrupt with Enter or the hotkey. Headphones work best.

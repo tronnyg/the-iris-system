@@ -3,7 +3,7 @@
 Controls
     Enter on an empty line     start / stop talking (push-to-talk toggle)
     type text + Enter          send a typed message instead of speaking
-    +  /  -                    rate the last reply good / bad
+    +  /  =  /  -              rate the last reply good / okay / bad
     /vad  /ptt                 switch between hands-free and push-to-talk
     /q                         quit (a short "sleep" reflection runs afterwards)
 
@@ -204,7 +204,7 @@ class Session:
         with locks.hold("live"):
             self.boot()
             hint = "Enter = talk/stop, or type a message" if self.listen else "type a message"
-            print(f"Ready. {hint}. '+'/'-' rate the last reply, /q quits.\n", flush=True)
+            print(f"Ready. {hint}. '+' / '=' / '-' rate the last reply, /q quits.\n", flush=True)
             greeting = self.s.persona.get("greeting")
             if greeting and self.speak:
                 self.conv._say_simple(greeting, True)

@@ -97,7 +97,10 @@ class Settings:
 
     @property
     def system_prompt(self) -> str:
-        return self.overrides.get("persona.system_prompt") or self.persona.get("system_prompt", "")
+        raw = self.overrides.get("persona.system_prompt") or self.persona.get("system_prompt", "")
+        # {name} and {model} placeholders let one persona describe whatever body it runs on
+        return (str(raw).replace("{name}", self.display_name)
+                .replace("{model}", str(self.model("llm", "a local model"))))
 
     def cue_vocab(self) -> tuple[list[str], list[str]]:
         cues = self.persona.get("cues") or {}

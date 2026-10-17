@@ -34,6 +34,8 @@ def feedback_command(text: str) -> str | None:
         return "good"
     if text.strip() in ("-", "/bad"):
         return "bad"
+    if text.strip() in ("=", "/ok"):
+        return "ok"
     if GOOD_RE.match(text):
         return "good"
     if BAD_RE.match(text):
@@ -99,7 +101,7 @@ class Conversation:
         fb = feedback_command(text)
         if fb and self.turn_no > 0:
             self.writer.feedback(self.turn_no, fb)
-            return "Noted." if fb == "good" else "Noted. I'll learn from that."
+            return "Noted. I'll learn from that." if fb == "bad" else "Noted."
         fact = remember_command(text)
         if fact:
             changes = self.memory.apply(Delta([fact], [], [], []),

@@ -84,3 +84,28 @@ def test_pronouncer_rules_and_entries():
 def test_years_are_left_alone():
     assert "2026" in Pronouncer({}, ["thousands"]).apply("In 2026 we")
     assert "three" in spoken_form("3")
+
+
+def test_new_pronunciation_rules():
+    from iris.textproc.pronounce import Pronouncer, RULES
+    p = Pronouncer(rules=list(RULES))
+    assert p.apply("$12.50") == "twelve dollars fifty cents"
+    assert p.apply("up 15%") == "up 15 percent"
+    assert p.apply("3 + 4 = 7") == "3 plus 4 equals 7"
+    assert "squared" in p.apply("E = mc²")
+    assert p.apply("C++ is fine") == "C++ is fine"
+    assert "2026-10-17" in Pronouncer(rules=["math"]).apply("on 2026-10-17")
+
+
+def test_tts_texts_are_grouped_and_interleaved():
+    from iris.config import Settings
+    from iris.improve import teacher
+    s = Settings.load()
+    groups = teacher.test_groups(s)
+    assert {"short", "numbers", "long", "questions"} <= set(groups)
+    seq = teacher.test_sentences(s)
+    first = seq[:len(groups)]
+    assert all(any(x in g for x in first) for g in groups.values())   # every kind early on
+    assert len(seq) == len(set(seq))
+    assert all(any(c.isdigit() for c in x) for x in teacher.number_sentences(s))
+    assert teacher.test_sentences(s, rotate=1)[0] != seq[0]

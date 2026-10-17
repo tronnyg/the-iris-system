@@ -14,6 +14,7 @@ Stages (each isolated: one failing never stops the rest; see `iris night --only 
     voice        your A/B listening votes -> a voice-swap proposal when clear
     scout        new package versions, runtime updates, trending models, local LLM benchmarks
     code         failure briefs (and an optional local coding agent)
+    escalate     hand the evidence to Claude (headless Claude Code): analysis + proposals
     report       the morning report
 """
 
@@ -33,12 +34,12 @@ from ..metrics import compute
 from ..stt import STT
 from ..tts.client import engine_load_options, make_tts, synth_opts
 from ..util import log, mean, read_json, read_jsonl, setup_logging, write_json
-from . import gate, promptopt, report as report_mod, scout, sleep, teacher, tuner
+from . import escalate, gate, promptopt, report as report_mod, scout, sleep, teacher, tuner
 from .judge import Judge
 
 NEEDS_LLM = {"sleep", "judge", "evals", "prompt"}
 STAGES = ["cleanup", "sleep", "metrics", "stt", "tts", "judge", "experiments", "tune",
-          "evals", "prompt", "voice", "scout", "code", "report"]
+          "evals", "prompt", "voice", "scout", "code", "escalate", "report"]
 
 
 class Night:
@@ -169,9 +170,10 @@ class Night:
         except Exception:
             listener = STT(self.settings.model("stt", "base.en"), local_only=True)
             listener.load()
-        sentences = teacher.test_sentences(self.settings)
         n = int(self.settings.pol("night.roundtrip_sentences", 20))
-        sentences = (sentences + teacher.recent_replies(self.turns()))[:n]
+        recent = teacher.recent_replies(self.turns(), n=4)
+        fixed = teacher.test_sentences(self.settings, rotate=dt.date.today().toordinal())
+        sentences = fixed[:max(0, n - len(recent))] + recent   # varied fixed texts + your real replies
         clips = teacher.night_clips_dir()
         current = self.settings.model("tts_engine", "kokoro")
         out: dict = {"engines": {}, "rule_changes": [], "listener": listener.name}
@@ -190,7 +192,7 @@ class Night:
                     self.metrics["tts_roundtrip_wer"] = rt["wer_mean"]
                 if self.settings.pol("surfaces", {}).get("pods/voice/pronunciations.yaml", "auto") == "auto":
                     out["rule_changes"] += teacher.tune_rules(engine, self.settings,
-                                                              teacher.test_sentences(self.settings), listener, tts=tts)
+                                                              teacher.number_sentences(self.settings), listener, tts=tts)
                     self.reload()
             except Exception as e:
                 out["engines"][engine] = {"available": True, "error": f"{type(e).__name__}: {e}"}
@@ -371,6 +373,9 @@ class Night:
         if cmd and briefs:
             agent_run = run_code_agent(cmd, path, self.date)
         return {"briefs": briefs, "file": str(path), "agent": agent_run}
+
+    def s_escalate(self) -> dict:
+        return escalate.run(self)
 
     def s_report(self) -> dict:
         self.r["metrics"] = self.metrics

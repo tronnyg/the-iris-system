@@ -12,6 +12,7 @@ def iris_home(tmp_path, monkeypatch):
     monkeypatch.setenv("IRIS_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")   # nothing listens: no real LLM in tests
+    monkeypatch.setenv("IRIS_CLAUDE_COMMAND", "iris-test-no-claude")   # never call the real Claude CLI
     from iris import paths, selfstore
     paths._agent = None
     paths.ensure_dirs()

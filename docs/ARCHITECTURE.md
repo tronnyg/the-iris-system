@@ -83,7 +83,7 @@ interrupted late, unspeakable formatting) become regression eval cases.
   the smallest model within 2 points of the best.
 - *Speech round trip:* each voice speaks fixed sentences + recent replies; Whisper transcribes
   them; lost words = intelligibility errors. Pronunciation rules (thousands, decimals, times,
-  ordinals, currency) are toggled per engine only when the round trip improves.
+  ordinals, currency, percent, math) are toggled per engine only when the round trip improves.
 - *Judge:* a bigger LLM scores replies (relevance, brevity, honesty, persona); poor ones become
   regression evals. Calibrate it with your own `+`/`-` ratings: the report shows both.
 - *Bounded tuning with rollback* (`improve/tuner.py`): rules map metrics to one step of one
@@ -99,6 +99,16 @@ interrupted late, unspeakable formatting) become regression eval cases.
   already pulled. It never downloads by itself (`scout.allow_downloads_gb: 0`).
 - *Code briefs:* clustered failures written up for you; optionally handed to a local coding
   agent on a branch of this repo with tests (`code_agent.command`, off by default).
+- *Escalation* (`improve/escalate.py`): a dossier (metrics, transcripts with timings,
+  ratings and judge scores, eval results, every stage's findings, last night's analysis) is
+  handed to Claude Code headless (`claude -p`, Opus) in a worktree of the code repo plus a
+  staged copy of the self store. Its self edits become one `proposal/claude-*` branch with
+  the gate run on it; its code edits become a `iris/claude-*` branch with tests run. Locked
+  paths are refused. It works on the setup (how the agent converses), not on model knowledge,
+  so its improvements carry over when the LLM is swapped.
+- *Varied voice texts:* the round-trip texts are grouped (short, conversational, questions,
+  numbers, emotion, technical, long) and interleaved with a nightly rotation, so the clips you
+  rate cover every kind of speech. Rule tuning uses only the numbers group (it's what rules touch).
 
 ## Safety rails
 

@@ -220,6 +220,29 @@ def cmd_persona(a) -> None:
         shutil.copy(a.file, pdir / f"{a.name}.yaml")
         selfstore.commit(f"you added persona {a.name}", files=[f"persona/{a.name}.yaml"], auto=False)
         print(f"added persona {a.name}; activate with: iris persona use {a.name}")
+    elif a.action == "sync":
+        # bring a persona up to date with the code repo's template, as a proposal you approve
+        name = a.name or s.persona_name
+        src = paths.REPO / "self_template" / "persona" / f"{name}.yaml"
+        if not src.exists():
+            sys.exit(f"no template persona '{name}' in {src.parent}")
+        rel = f"persona/{name}.yaml"
+        cur = (s.root / rel).read_text() if (s.root / rel).exists() else ""
+        new = src.read_text()
+        if cur == new:
+            print(f"persona {name} already matches the template")
+            return
+        import datetime as _dt
+        import time as _time
+        from .util import write_json
+        branch = selfstore.propose(f"persona-sync-{name}-{_dt.date.today().isoformat()}", {rel: new},
+                                   f"persona {name}: update from the code template")
+        write_json(paths.proposals_dir() / (branch.replace("/", "_") + ".json"),
+                   {"branch": branch, "kind": "persona", "title": f"Update persona {name} from template",
+                    "change": "Replaces your persona file with the latest version shipped in the code repo.",
+                    "created": _time.time(), "tier": "approve"})
+        print(f"Proposed {branch}. See it: iris review {branch.split('/', 1)[1]}   "
+              f"Ship it: iris approve {branch.split('/', 1)[1]}")
 
 
 def cmd_agent(a) -> None:
@@ -316,7 +339,7 @@ def main(argv=None) -> None:
     p.add_argument("name")
     p.add_argument("value")
     p = add("persona", cmd_persona, "list / show / use / add personas")
-    p.add_argument("action", choices=["list", "show", "use", "add"])
+    p.add_argument("action", choices=["list", "show", "use", "add", "sync"])
     p.add_argument("name", nargs="?")
     p.add_argument("--file")
     p = add("agent", cmd_agent, "list agents or create a new one")

@@ -37,8 +37,23 @@ def _trend(name: str, new, old) -> str:
     return ("better" if good else "worse")
 
 
-def pending_proposals() -> list[dict]:
+def code_proposals() -> list[dict]:
+    """Code-repo branches waiting for you (from the escalation stage)."""
     out = []
+    d = paths.proposals_dir()
+    for f in sorted(d.glob("code_*.json")) if d.exists() else []:
+        if f.name.endswith((".approved.json", ".rejected.json")):
+            continue
+        ev = read_json(f, {}) or {}
+        if ev.get("kind") == "code":
+            out.append({"branch": ev["branch"], "id": ev["id"], "title": ev.get("title", ev["id"]),
+                        "change": ev.get("change", "") + (f" Tests: {ev['tests']}" if ev.get("tests") else ""),
+                        "gate": None, "kind": "code", "file": str(f)})
+    return out
+
+
+def pending_proposals() -> list[dict]:
+    out = code_proposals()
     try:
         branches = selfstore.proposals()
     except Exception:
@@ -168,6 +183,35 @@ def build(r: dict) -> tuple[str, list[dict]]:
             md.append(f"- {b['title']} ({b['count']})")
         if code.get("agent"):
             md.append(f"\nCoding agent draft: {json.dumps(code['agent'])[:400]}")
+
+    esc = res("escalate")
+    if esc and not esc.get("skipped"):
+        md += ["", "## Escalation (Claude)", ""]
+        cl = esc.get("claude") or {}
+        if cl.get("error"):
+            md.append(f"- Claude run failed: {cl['error']}")
+        if esc.get("analysis"):
+            text = Path(esc["analysis"]).read_text().strip() if Path(esc["analysis"]).exists() else ""
+            md += [ln.replace("# ", "### ", 1) if ln.startswith("#") else ln for ln in text.splitlines()[:80]]
+            md.append(f"\nFull analysis: `{esc['analysis']}`")
+        elif cl.get("result"):
+            md.append(cl["result"][:1500])
+        if (esc.get("self") or {}).get("proposal"):
+            g = esc["self"].get("gate") or {}
+            md.append(f"\n- Self changes proposed as `{esc['self']['proposal'].split('/', 1)[1]}`"
+                      + (f" (gate: {g.get('reason')})" if g else ""))
+        if esc.get("code"):
+            c = esc["code"]
+            md.append(f"- Code changes on branch `{c['branch']}`: tests {'pass' if c['tests_passed'] else 'FAIL'}"
+                      f" ({c['tests']}). Review: `iris review {c['id']}`")
+        if esc.get("refused_self_paths"):
+            md.append(f"- Ignored edits to locked or out-of-scope files: {', '.join(esc['refused_self_paths'])}")
+        if esc.get("suggested_golden"):
+            md.append(f"- Suggested golden evals for you to consider: `{esc['suggested_golden']}`")
+        if cl.get("secs"):
+            md.append(f"- Took {round(cl['secs'] / 60, 1)} min.")
+    elif esc.get("skipped"):
+        md += ["", f"Escalation skipped: {esc['skipped']}."]
 
     problems = [f"- `{k}`: {v.get('error') or v.get('why')}" for k, v in st.items()
                 if v.get("status") in ("error", "skipped")]

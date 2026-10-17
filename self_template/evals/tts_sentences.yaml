@@ -1,13 +1,54 @@
-# Fixed sentences for the overnight speech round trip (TTS -> Whisper -> compare).
-# They target the usual weak spots: numbers, dates, names, abbreviations, punctuation.
-sentences:
-  - "Good morning. It is twenty past seven and the weather looks clear."
-  - "Your GTX 1070 has 8 gigabytes of memory."
-  - "The meeting moved to 3:45 on Thursday the 14th."
-  - "It costs 1,250 rand, or roughly 70 dollars."
-  - "Dr. Smith arrived at 9 a.m. with the results."
-  - "There were 12,345 visitors in 2026."
-  - "Turn left on Main Street, then continue for 2.5 kilometres."
-  - "IRIS online. All systems nominal."
-  - "I can't see your calendar, but I can help you plan the day."
-  - "The quick brown fox jumps over the lazy dog."
+# Texts for the overnight speech round trip (voice -> Whisper -> compare) and for the
+# morning `iris rate` listening test. Grouped by kind so every night covers short and
+# long, numbers, questions, emotion and technical speech. The groups are interleaved, so
+# the first clips you rate already span every kind.
+#
+# Add your own lines anywhere (e.g. names you use, phrases that sounded wrong).
+# The "numbers" group is also used to test pronunciation rules (currency, maths, ...).
+
+groups:
+  short:
+    - "Done."
+    - "Sure, give me a second."
+    - "Good morning. All systems are running."
+    - "Hmm, I'm not sure about that one."
+    - "Got it. I'll remember that."
+
+  conversational:
+    - "That's a fair question, and honestly, it depends on what you want out of it."
+    - "Oh, nice. How did the meeting go in the end?"
+    - "I can't see your calendar, but I can help you plan the day if you tell me what's on it."
+    - "Right, so you'd like something quick, cheap, and not too spicy. Got it."
+
+  questions:
+    - "Do you want the short version or the full story?"
+    - "Should I read that back to you, or just save it?"
+    - "Wait, did you mean this Friday or next Friday?"
+
+  numbers:
+    - "The meeting moved to 3:45 on Thursday the 14th."
+    - "It costs R1,250, or roughly $70.50 at today's rate."
+    - "There were 12,345 visitors in 2026, up 15% from last year."
+    - "Turn left on Main Street, then continue for 2.5 kilometres."
+    - "So 3 + 4 = 7, and 12 × 8 = 96."
+    - "The formula is E = mc², and √144 is 12."
+    - "Call me back at 021 555 0199 before 17:30."
+    - "Your GTX 1070 has 8 gigabytes of memory and draws about 150 watts."
+    - "Version 3.11.4 fixed the bug from March 3rd."
+
+  emotion:
+    - "[warm] That's genuinely great news. Congratulations."
+    - "[sigh] Well, that didn't go as planned."
+    - "[playful] Oh, so now you need me. Interesting."
+    - "[serious] Please save your work first. This will restart the computer."
+
+  technical:
+    - "Object oriented programming groups data and the functions that work on it into objects."
+    - "Run pip install, then restart the terminal so the path updates."
+    - "The API returned a 404, which usually means the URL is wrong."
+    - "Dr. Smith said the CPU and the GPU both hit 90 degrees under load."
+
+  long:
+    - "Object oriented programming is a way of organising code around objects instead of loose functions. An object bundles some data with the actions that make sense for it, so a bank account knows its balance and how to deposit or withdraw. Classes are the blueprints, objects are the things you build from them, and inheritance lets one class reuse and extend another."
+    - "Here's the plan for tomorrow. You start with the client call at nine thirty, then you've got a clear block until lunch for the report. After lunch there's the team sync, and if that ends on time, you'll still have an hour to review the budget before you head home."
+    - "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. Sphinx of black quartz, judge my vow."

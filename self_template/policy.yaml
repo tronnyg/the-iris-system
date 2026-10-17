@@ -61,6 +61,19 @@ scout:
   pypi_packages: [faster-whisper, kokoro, misaki, chatterbox-tts, ctranslate2]
   hf_tasks: [text-to-speech, automatic-speech-recognition]
 
+escalation:
+  # After the local stages, hand tonight's evidence (metrics, transcripts, evals, what the
+  # night changed) to Claude Code running headless on your subscription. It writes an
+  # analysis for the morning report and proposes self/code changes, which you approve.
+  # Transcripts and settings are sent to Anthropic; audio never leaves the machine.
+  # Defaults apply when this block is missing. Set enabled: false to keep everything local.
+  enabled: true
+  command: claude
+  model: claude-opus-5-5
+  max_minutes: 45
+  min_new_turns: 1           # skip nights with no new conversations (unless evals fail)
+  code_changes: true         # false = only persona/settings/memory proposals
+
 code_agent:
   # Optional: a local coding agent that drafts code fixes for failure clusters on a
   # branch of the code repo. Disabled by default (small local models are weak engineers).

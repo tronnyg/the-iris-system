@@ -53,14 +53,38 @@ def _ordinals(text: str) -> str:
 
 
 def _currency(text: str) -> str:
+    cents_name = {"$": "cents", "€": "cents", "£": "pence", "R": "cents"}
+
     def rep(m):
         sym, num = m.group(1), m.group(2).replace(",", "")
         name = {"$": "dollars", "€": "euros", "£": "pounds", "R": "rand"}[sym]
         try:
-            return f"{_n2w(int(float(num)))} {name}"
+            whole, _, frac = num.partition(".")
+            out = f"{_n2w(int(whole))} {name}"
+            if frac and int(frac[:2].ljust(2, "0")):
+                out += f" {_n2w(int(frac[:2].ljust(2, '0')))} {cents_name[sym]}"
+            return out
         except ValueError:
             return m.group(0)
     return re.sub(r"([$€£]|\bR)\s?(\d[\d,]*(?:\.\d+)?)", rep, text)
+
+
+def _percent(text: str) -> str:
+    return re.sub(r"(\d)\s?%", r"\1 percent", text)
+
+
+_OPS = {"+": "plus", "=": "equals", "×": "times", "*": "times", "÷": "divided by", "^": "to the power of"}
+
+
+def _math(text: str) -> str:
+    text = text.replace("²", " squared").replace("³", " cubed").replace("√", "the square root of ")
+    text = text.replace("≈", " is about ").replace("≠", " is not equal to ")
+    text = text.replace("≤", " is at most ").replace("≥", " is at least ")
+    # binary operators between operands (C++ and x++ are left alone: the next char isn't an operand)
+    text = re.sub(r"(?<=[\w)])\s*([+=×*÷^])\s*(?=[\w(])", lambda m: f" {_OPS[m.group(1)]} ", text)
+    text = re.sub(r"(?<=\d)\s*−\s*(?=\d)|(?<=\d)\s+-\s+(?=\d)", " minus ", text)   # spaced or unicode minus
+    text = re.sub(r"(?<=\d)\s+/\s+(?=\d)", " divided by ", text)
+    return re.sub(r"  +", " ", text)
 
 
 RULES = {
@@ -68,9 +92,11 @@ RULES = {
     "decimals": _decimals,       # 2.5 -> two point five
     "times": _times,             # 3:45 -> three forty-five
     "ordinals": _ordinals,       # 14th -> fourteenth
-    "currency": _currency,       # $70 -> seventy dollars
+    "currency": _currency,       # $70.50 -> seventy dollars fifty cents
+    "percent": _percent,         # 15% -> 15 percent
+    "math": _math,               # 3 + 4 = 7 -> 3 plus 4 equals 7; x² -> x squared
 }
-ORDER = ["currency", "times", "decimals", "thousands", "ordinals"]
+ORDER = ["currency", "percent", "math", "times", "decimals", "thousands", "ordinals"]
 
 
 class Pronouncer:

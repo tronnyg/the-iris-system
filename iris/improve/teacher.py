@@ -153,12 +153,45 @@ def recent_replies(turns: list[dict], n: int = 6) -> list[str]:
     return out
 
 
-def test_sentences(settings: Settings) -> list[str]:
-    p = settings.root / "evals/tts_sentences.yaml"
+def _load_groups(path: Path) -> dict[str, list[str]]:
     try:
-        return list((yaml.safe_load(p.read_text()) or {}).get("sentences") or [])
+        doc = yaml.safe_load(path.read_text()) or {}
     except FileNotFoundError:
-        return []
+        return {}
+    groups = {k: [str(x) for x in (v or [])] for k, v in (doc.get("groups") or {}).items()}
+    if doc.get("sentences"):                       # the old flat format
+        groups.setdefault("custom", []).extend(str(x) for x in doc["sentences"])
+    return groups
+
+
+def test_groups(settings: Settings) -> dict[str, list[str]]:
+    """Your self-store texts merged with the ones shipped in the code repo (deduplicated)."""
+    merged: dict[str, list[str]] = {}
+    for path in (paths.REPO / "self_template/evals/tts_sentences.yaml", settings.root / "evals/tts_sentences.yaml"):
+        for g, items in _load_groups(path).items():
+            bucket = merged.setdefault(g, [])
+            seen = set(bucket) | {x for v in merged.values() for x in v}
+            bucket.extend(x for x in items if x not in seen)
+    return {g: v for g, v in merged.items() if v}
+
+
+def test_sentences(settings: Settings, rotate: int = 0) -> list[str]:
+    """All texts, interleaved across groups (short, numbers, long, ...) so any prefix is varied.
+
+    `rotate` shifts where each group starts, so different nights hear different lines first.
+    """
+    groups = list(test_groups(settings).values())
+    groups = [g[rotate % len(g):] + g[:rotate % len(g)] for g in groups]
+    out: list[str] = []
+    for i in range(max((len(g) for g in groups), default=0)):
+        out += [g[i] for g in groups if i < len(g)]
+    return out
+
+
+def number_sentences(settings: Settings) -> list[str]:
+    """Texts used to test pronunciation rules (they only touch numbers and symbols)."""
+    g = test_groups(settings)
+    return g.get("numbers") or [s for v in g.values() for s in v if any(c.isdigit() for c in s)]
 
 
 def night_clips_dir() -> Path:
