@@ -36,7 +36,8 @@ from .util import log
 
 class Session:
     def __init__(self, mode: str = "ptt", engine: str | None = None, speak: bool = True,
-                 listen: bool = True, no_audio_device: bool = False):
+                 listen: bool = True, no_audio_device: bool = False, mic=None):
+        self.mic = mic
         paths.ensure_dirs()
         selfstore.init()
         self.s = Settings.load()
@@ -81,10 +82,14 @@ class Session:
             vad = VADConfig(threshold_db=float(self.s.knob("vad.threshold_db", 12)),
                             silence_ms=int(self.s.knob("vad.silence_ms", 700)),
                             min_speech_ms=int(self.s.knob("vad.min_speech_ms", 250)))
+            device = mic_device(self.mic, self.s)
             self.recorder = Recorder(self._on_utterance, mode=self.mode, vad=vad,
                                      on_speech_start=self._on_speech_start,
-                                     resume_window_ms=int(self.s.knob("vad.resume_window_ms", 1000)))
+                                     resume_window_ms=int(self.s.knob("vad.resume_window_ms", 1000)),
+                                     device=device)
             self.recorder.start()
+            print(f"  mic: {mic_name(device)}" + ("   (hands-free: just talk)" if self.mode == "vad" else ""),
+                  flush=True)
         self.conv = Conversation(self.s, self.llm, self.tts, self.player, self.writer, self.memory,
                                  on_text=lambda t: print(f"  {name}: {t}", flush=True),
                                  on_first_audio_queued=self._on_first_audio)
@@ -103,6 +108,8 @@ class Session:
                 self.recorder.set_paused(True)     # half-duplex: don't hear ourselves
 
     def _on_speech_start(self) -> None:
+        if self.mode == "vad":
+            print("  ● hearing you...", flush=True)
         # In VAD mode: if the user starts speaking again before the reply plays, the
         # previous end-of-speech was premature. Abandon that reply; the merged utterance follows.
         conv = self.conv
@@ -151,7 +158,13 @@ class Session:
         if not tr.text or tr.hallucination:
             self.writer.turn({"turn": None, "mode": utt.method, "audio_in": audio_rel, "user_text": tr.text,
                               "stt": tr.as_dict(), "endpoint": endpoint, "false_trigger": True})
-            print("  (heard nothing useful)", flush=True)
+            import numpy as np
+            a = np.asarray(utt.audio, dtype=np.float32)
+            peak = 20 * np.log10(float(np.max(np.abs(a))) + 1e-9) if len(a) else -120
+            why = f'whisper heard "{tr.text}"' if tr.text else "whisper heard no words"
+            hint = "  -> your mic is very quiet or the wrong device: run `iris mic`" if peak < -30 else ""
+            print(f"  (heard nothing useful: {why}, loudest {peak:.0f} dB, "
+                  f"no-speech {tr.no_speech_prob if tr.no_speech_prob is not None else '?'}){hint}", flush=True)
             return
         print(f"  you: {tr.text}", flush=True)
         self.conv.respond(tr.text, mode=utt.method, t_end=utt.t_end, stt=tr.as_dict(),
@@ -219,8 +232,11 @@ class Session:
                         self.drain()
                         break
                     if line.strip() == "/vad" and self.recorder:
+                        if self.recorder.recording:
+                            self.recorder.recording = False
+                            self.recorder.ptt_buf = []
                         self.mode = self.recorder.mode = "vad"
-                        print("  hands-free: just talk; Enter interrupts")
+                        print("  hands-free: just talk (no Enter needed); Enter interrupts a reply")
                         continue
                     if line.strip() == "/ptt" and self.recorder:
                         self.mode = self.recorder.mode = "ptt"
@@ -229,8 +245,15 @@ class Session:
                     if not line.strip():
                         if self.recorder is None or (self.mode == "vad" and self.conv and self.conv.busy()):
                             self.conv.interrupt("barge_in")
+                        elif self.mode == "vad" and not self.recorder.recording:
+                            print("  (hands-free is on: just speak, no Enter needed. /ptt switches back)")
                         else:
                             self.ptt("toggle")
+                        continue
+                    cmd = line.strip()
+                    if cmd.startswith("/") and cmd.split()[0] not in ("/good", "/bad", "/ok"):
+                        print("  commands: /vad (hands-free)  /ptt (push-to-talk)  /q (quit)  "
+                              "+ = - (rate the last reply)")
                         continue
                     # typed messages and ratings queue up in order; Enter on an empty line interrupts
                     self.jobs.put(("text", line))
@@ -257,6 +280,29 @@ class Session:
             paths.socket_path().unlink()
         except FileNotFoundError:
             pass
+
+
+def mic_device(explicit=None, settings: Settings | None = None):
+    """Which input to use: --mic, then $IRIS_MIC, then pod.yaml `audio.input_device`, else default.
+
+    A number is a device index from `iris mic --list`; text matches part of a device name.
+    """
+    val = explicit or os.environ.get("IRIS_MIC") or (
+        ((settings.pod.get("audio") or {}).get("input_device")) if settings else None)
+    if val in (None, "", "default"):
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def mic_name(device) -> str:
+    try:
+        import sounddevice as sd
+        return str(sd.query_devices(device, kind="input")["name"])
+    except Exception as e:
+        return f"{device} ({e})"
 
 
 def send_control(msg: str) -> bool:

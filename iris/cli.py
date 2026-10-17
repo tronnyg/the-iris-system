@@ -22,7 +22,7 @@ def _settings():
 def cmd_talk(a) -> None:
     from .talk import Session
     s = Session(mode="vad" if a.vad else "ptt", engine=a.engine, speak=not a.silent,
-                listen=not a.no_mic, no_audio_device=a.no_audio)
+                listen=not a.no_mic, no_audio_device=a.no_audio, mic=getattr(a, "mic", None))
     s.run()
     if not a.no_sleep:
         print("Reflecting on this session (memory + lessons) ...", flush=True)
@@ -32,6 +32,56 @@ def cmd_talk(a) -> None:
             print("  " + c)
         if r["regressions"]:
             print(f"  {len(r['regressions'])} moment(s) saved as regression evals")
+
+
+def cmd_mic(a) -> None:
+    import numpy as np
+    import sounddevice as sd
+    from .audio import MIC_SR
+    from .talk import mic_device, mic_name
+    s = _settings()
+    if a.list:
+        default_in = sd.default.device[0] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
+        for i, d in enumerate(sd.query_devices()):
+            if d["max_input_channels"] > 0:
+                mark = "*" if i == default_in else " "
+                print(f"{mark} {i:>3}  {d['name']}  ({d['max_input_channels']} ch, {int(d['default_samplerate'])} Hz)")
+        print("\n* = system default. Use one with: iris mic --device <index>, then "
+              "iris talk --mic <index> (or set IRIS_MIC, or audio: {input_device: <index>} in pod.yaml)")
+        return
+    dev = mic_device(a.device, s)
+    print(f"device: {mic_name(dev)}")
+    print("measuring room noise (stay quiet) ...", flush=True)
+    quiet = sd.rec(int(1.5 * MIC_SR), samplerate=MIC_SR, channels=1, dtype="float32", device=dev)
+    sd.wait()
+    print(f"now speak normally for {a.seconds:.0f} seconds ...", flush=True)
+    rec = sd.rec(int(a.seconds * MIC_SR), samplerate=MIC_SR, channels=1, dtype="float32", device=dev)
+    sd.wait()
+    q, x = quiet[:, 0], rec[:, 0]
+    db = lambda v: 20 * np.log10(float(v) + 1e-9)
+    noise, rms, peak = db(np.sqrt(np.mean(q ** 2))), db(np.sqrt(np.mean(x ** 2))), db(np.max(np.abs(x)))
+    out = paths.logs_dir() / "mic-test.wav"
+    import soundfile as sf
+    sf.write(str(out), x, MIC_SR)
+    from .stt import STT
+    tr = STT(s.model("stt", "base.en")).transcribe(x, beam_size=5)
+    print(f"\nroom noise {noise:.0f} dB, your speech {rms:.0f} dB (loudest {peak:.0f} dB), "
+          f"difference {rms - noise:.0f} dB")
+    print(f'whisper heard: "{tr.text}"  (no-speech {tr.no_speech_prob})')
+    thr = float(s.knob("vad.threshold_db", 12))
+    if peak < -45 or np.max(np.abs(x)) == 0:
+        print("-> almost nothing recorded: wrong device or muted mic. Try `iris mic --list`, and check the "
+              "input in your sound settings (pavucontrol / wpctl status).")
+    elif peak < -30:
+        print("-> very quiet: raise the mic volume (pavucontrol > Input Devices, or wpctl set-volume @DEFAULT_SOURCE@ 1.0)")
+    elif rms - noise < thr:
+        print(f"-> speech is only {rms - noise:.0f} dB above the room; hands-free needs about {thr:.0f}. "
+              f"Move closer, reduce noise, or lower it: iris set knob vad.threshold_db {max(6, int(rms - noise) - 2)}")
+    elif not tr.text:
+        print("-> loud enough, but Whisper found no words. Listen to the recording to check it sounds right.")
+    else:
+        print("-> looks good.")
+    print(f"recording: {out}   (play: pw-play {out})")
 
 
 def cmd_chat(a) -> None:
@@ -296,6 +346,11 @@ def main(argv=None) -> None:
         p.add_argument("--no-mic", action="store_true", help="typed input only")
         p.add_argument("--no-audio", action="store_true", help="no sound card (testing)")
         p.add_argument("--no-sleep", action="store_true", help="skip the reflection after the session")
+        p.add_argument("--mic", help="input device: index or part of its name (see `iris mic --list`)")
+    p = add("mic", cmd_mic, "test the microphone: level, what Whisper hears, which device")
+    p.add_argument("--list", action="store_true", help="list input devices and exit")
+    p.add_argument("--device", help="index or part of a device name (default: the one iris talk uses)")
+    p.add_argument("--seconds", type=float, default=5.0)
     p = add("ptt", cmd_ptt, "control a running session (for global hotkeys)")
     p.add_argument("action", choices=["down", "up", "toggle", "interrupt", "good", "bad", "quit"])
     p = add("say", cmd_say, "speak a sentence with the current voice")
