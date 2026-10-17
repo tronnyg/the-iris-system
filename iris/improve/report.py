@@ -115,6 +115,15 @@ def build(r: dict) -> tuple[str, list[dict]]:
         md.append("\nReview with `iris review`, then `iris approve <id>` or `iris reject <id>`.")
     else:
         md.append("- Nothing pending.")
+    try:
+        from .sleep import open_requests
+        reqs = open_requests()
+    except Exception:
+        reqs = []
+    if reqs:
+        md += ["", "## Your requests (things you asked IRIS for)", ""]
+        md += [f"- {r['text']}" for r in reqs[-15:]]
+        md.append("\nThe Claude escalation sees these too. Close one with `iris requests --close <n>`.")
     pr = res("prompt")
     if pr.get("tried") and not pr.get("proposal"):
         md.append(f"\nTried {len(pr['tried'])} prompt edit(s) tonight; none passed the gate: "

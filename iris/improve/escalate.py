@@ -148,6 +148,12 @@ def build_dossier(night, out: Path, cfg: dict) -> dict:
         evmd.append(f"- `{f['id']}`: {'; '.join(f['failures'])}\n  reply: {f['reply'][:400]}")
     (out / "evals.md").write_text("\n".join(evmd) + "\n")
 
+    from .sleep import open_requests
+    reqs = open_requests()
+    if reqs:
+        (out / "requests.md").write_text("# The user's open requests\n\nThings the user asked IRIS to do "
+                                         "differently or to gain (newest last):\n\n"
+                                         + "\n".join(f"- {r['text']}" for r in reqs) + "\n")
     prev = st.get("last_analysis")
     if prev and Path(prev).exists():
         shutil.copy(prev, out / "previous-analysis.md")

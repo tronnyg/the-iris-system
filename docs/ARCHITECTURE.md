@@ -138,3 +138,17 @@ gate, experiments and report are pod-agnostic.
 **Design 2 later:** OpenEvolve can be pointed at a single file (for example the VAD endpointing
 function or the splitter) with an evaluator built from replayed traces; its winner goes
 through the same gate and approval path as everything else.
+
+## Turn-taking (hands-free)
+
+Every utterance gets an id. Speech that starts before the reply to the previous utterance
+is heard means that utterance wasn't the end of the turn: it is merged into the new one and
+marked *superseded*, so it is never answered on its own, even if it is still queued or being
+transcribed (this was the cause of 10-50 s delays: stale partial questions each got a full
+reply). A reply never starts while the user is mid-sentence. With speakers the mic is muted
+while IRIS talks; in headset mode it stays open with `vad.barge_in_db` extra threshold and
+talking over IRIS interrupts her. Whisper gets the last reply plus names from the
+conversation as its prompt (`stt.context`), and a transcript that merely echoes that hint is
+discarded. A reply cut by `llm.num_predict` ends on its last full sentence and offers to go on.
+Feature requests the reflection hears ("stop when I say stop") go to `iris requests` and the
+report, not into `user.md`.

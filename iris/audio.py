@@ -66,14 +66,15 @@ class EnergyVAD:
     def process(self, frame: np.ndarray) -> list[tuple[str, dict]]:
         events: list[tuple[str, dict]] = []
         level = dbfs(frame)
-        is_voice = level > self.noise + self.cfg.threshold_db
+        extra = getattr(self, "extra_db", 0.0)
+        is_voice = level > self.noise + self.cfg.threshold_db + extra
         if not self.in_speech:
             # track the noise floor only outside speech; faster down than up
             a = 0.05 if level < self.noise else 0.01
             self.noise = (1 - a) * self.noise + a * level
             self.pre.append(frame)
             self.speech_run = self.speech_run + 1 if is_voice else 0
-            if self.speech_run * FRAME_MS >= self.cfg.min_speech_ms:
+            if self.speech_run * FRAME_MS >= self.cfg.min_speech_ms + getattr(self, "extra_min_ms", 0):
                 self.in_speech = True
                 self.silence_run = 0
                 self.buf = list(self.pre)
@@ -110,6 +111,8 @@ class Utterance:
     speech_ms: int = 0
     trailing_silence_ms: int = 0
     merged_after_resume: bool = False   # user kept talking after a premature end
+    uid: int = 0                        # 1, 2, 3 ... per recorder
+    includes: tuple = ()                # uids of every utterance merged into this one (incl. itself)
 
 
 class Recorder:
@@ -132,6 +135,8 @@ class Recorder:
         self.last_audio: np.ndarray | None = None
         self.allow_merge = False         # pipeline sets True until the reply starts playing
         self._carry = False              # merge the next utterance into the last, however late
+        self._uid = 0
+        self.last_includes: tuple = ()
         self.stream = None
         self.running = False
 
@@ -177,8 +182,10 @@ class Recorder:
         self.recording = False
         audio = np.concatenate(self.ptt_buf) if self.ptt_buf else np.zeros(0, dtype=np.float32)
         self.ptt_buf = []
+        self._uid += 1
         self.on_utterance(Utterance(audio=audio, method="ptt", t_end=time.perf_counter(),
-                                    speech_ms=int(len(audio) / MIC_SR * 1000)))
+                                    speech_ms=int(len(audio) / MIC_SR * 1000), uid=self._uid,
+                                    includes=(self._uid,)))
 
     def ptt_toggle(self) -> bool:
         if self.recording:
@@ -204,27 +211,41 @@ class Recorder:
                            and (now - self.last_end) * 1000 <= self.resume_window_ms + self.vad.cfg.min_speech_ms)
                 if self.on_speech_start:
                     self.on_speech_start()
-                self._resuming = resumed or self._carry
+                self._resuming = resumed or self._carry or getattr(self, "_resuming", False)
                 self._carry = False
             elif kind == "end":
                 audio = info["audio"]
-                merged = getattr(self, "_resuming", False) and self.last_audio is not None
+                merged = (getattr(self, "_resuming", False) and self.last_audio is not None
+                          and len(self.last_audio) < MIC_SR * 60)     # never grow past a minute
+                self._uid += 1
+                includes = (tuple(self.last_includes) if merged else ()) + (self._uid,)
                 if merged:
                     gap = np.zeros(int(MIC_SR * 0.2), dtype=np.float32)
                     audio = np.concatenate([self.last_audio, gap, audio])
                 self.last_end = now
                 self.last_audio = audio
+                self.last_includes = includes
                 self._resuming = False
                 self.on_utterance(Utterance(audio=audio, method="vad", t_end=now,
                                             speech_ms=info["speech_ms"],
                                             trailing_silence_ms=info["trailing_silence_ms"],
-                                            merged_after_resume=merged))
+                                            merged_after_resume=merged, uid=self._uid, includes=includes))
 
     def carry_over(self) -> None:
         """The reply to the last utterance was abandoned because the user kept talking:
-        prepend it to the speech now starting, however long the pause was, so the
-        question isn't lost. Call from `on_speech_start`."""
-        self._carry = self.last_audio is not None
+        merge it with the speech now starting (or already under way), however long the
+        pause was, so the question isn't lost."""
+        if self.last_audio is None:
+            return
+        if self.vad.in_speech:
+            self._resuming = True       # the current speech gets the last utterance prepended
+        else:
+            self._carry = True          # ...or the next speech does
+
+    def set_duplex_boost(self, extra_db: float, extra_min_ms: int = 0) -> None:
+        """Headset barge-in: while the agent speaks, only clearly louder speech counts."""
+        self.vad.extra_db = extra_db
+        self.vad.extra_min_ms = extra_min_ms
 
     def set_paused(self, paused: bool) -> None:
         self.paused = paused

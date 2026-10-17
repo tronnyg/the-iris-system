@@ -32,6 +32,15 @@ WHY_RE = re.compile(r"^\s*(?:(?P<good>good|great|nice|perfect|excellent)|(?P<bad
                     r"(?:answer|reply|response)\b[\s,.;:!-]+(?P<why>\w.*)$", re.I | re.S)
 
 
+def complete_sentences(text: str) -> str:
+    """Drop a trailing unfinished sentence ("... the same action, and")."""
+    t = text.rstrip()
+    if not t or t[-1] in ".!?…\"')]":
+        return t
+    cut = max(t.rfind(". "), t.rfind("! "), t.rfind("? "))
+    return t[:cut + 1] if cut > 0 else ""
+
+
 def parse_feedback(text: str) -> tuple[str, str | None] | None:
     """(rating, reason or None) if `text` rates the last reply, else None.
 
@@ -246,7 +255,13 @@ class Conversation:
                 for c in splitter.feed(think.feed(delta)):
                     emit(c)
             if not live.cancel.is_set():
-                for c in splitter.feed(think.flush()) + splitter.flush():
+                tail = splitter.feed(think.flush()) + splitter.flush()
+                if stats.done_reason == "length":
+                    # the reply hit llm.num_predict: never stop mid-sentence, offer to go on
+                    tail = [t for t in (complete_sentences(c) for c in tail) if t]
+                    tail.append(str(s.persona.get("continue_offer") or "Want me to keep going?"))
+                    timing["cut_at_length"] = True
+                for c in tail:
                     emit(c)
         except LLMError as e:
             error = str(e)

@@ -24,7 +24,7 @@ def cmd_talk(a) -> None:
     ui = getattr(a, "ui", False)
     s = Session(mode="vad" if (a.vad or ui) and not getattr(a, "ptt", False) else "ptt", engine=a.engine,
                 speak=not a.silent, listen=not a.no_mic, no_audio_device=a.no_audio,
-                mic=getattr(a, "mic", None), ui=ui)
+                mic=getattr(a, "mic", None), ui=ui, headset=True if getattr(a, "headset", False) else None)
     s.run()
     if not a.no_sleep:
         print("Reflecting on this session (memory + lessons) ...", flush=True)
@@ -91,6 +91,28 @@ def cmd_mic(a) -> None:
     else:
         print("-> looks good.")
     print(f"recording: {out}   (play: pw-play {out})")
+
+
+def cmd_requests(a) -> None:
+    from .improve.sleep import open_requests
+    from .util import read_jsonl, write_jsonl
+    p = paths.state_dir() / "requests.jsonl"
+    reqs = open_requests()
+    if a.close:
+        if not 1 <= a.close <= len(reqs):
+            sys.exit(f"no open request #{a.close}")
+        target = reqs[a.close - 1]
+        rows = list(read_jsonl(p))
+        for r in rows:
+            if r.get("ts") == target.get("ts") and r.get("text") == target.get("text"):
+                r["status"] = "closed"
+        write_jsonl(p, rows)
+        print(f"closed: {target['text']}")
+        return
+    if not reqs:
+        print("No open requests.")
+    for i, r in enumerate(reqs, 1):
+        print(f"{i:>3}. {r['text']}")
 
 
 def cmd_chat(a) -> None:
@@ -357,10 +379,14 @@ def main(argv=None) -> None:
         p.add_argument("--no-sleep", action="store_true", help="skip the reflection after the session")
         p.add_argument("--mic", help="input device: index or part of its name (see `iris mic --list`)")
         p.add_argument("--ui", action="store_true", help="full-screen animated eye with live captions (hands-free)")
+        p.add_argument("--headset", action="store_true",
+                       help="you wear a headset: keep listening while IRIS talks, so talking over her interrupts")
         p.add_argument("--ptt", action="store_true", help="with --ui: push-to-talk (Space) instead of hands-free")
     p = add("eye", lambda a: __import__("iris.ui", fromlist=["demo"]).demo(a.seconds),
             "preview the --ui animation without loading any models")
     p.add_argument("--seconds", type=float, default=24.0)
+    p = add("requests", cmd_requests, "things you asked IRIS for (collected by the reflection)")
+    p.add_argument("--close", type=int, help="mark request <n> as done")
     p = add("mic", cmd_mic, "test the microphone: level, what Whisper hears, which device")
     p.add_argument("--list", action="store_true", help="list input devices and exit")
     p.add_argument("--device", help="index or part of a device name (default: the one iris talk uses)")

@@ -97,6 +97,10 @@ class Sanitizer:
             words = m.group(1).lower().split()
             if not words:
                 return m.group(0)
+            cue = normalize(" ".join(words))
+            if cue in self.vocab:                  # "(dry)", "*pause*": a cue in the wrong brackets
+                r.stage += 1
+                return f" [{cue}] "
             if words[0] in _STAGE_WORDS:
                 return stage(m)
             if m.group(0)[0] == "*" and words[0] in _ACTION_VERBS:

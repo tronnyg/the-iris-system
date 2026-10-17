@@ -49,6 +49,13 @@ def read_jsonl(path: Path) -> Iterator[dict]:
                 log.warning("skipping bad json line in %s", path)
 
 
+def write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    tmp.replace(path)
+
+
 def append_jsonl(path: Path, obj: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as f:

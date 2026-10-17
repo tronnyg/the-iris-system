@@ -22,6 +22,7 @@ model. Keep the persona prompt a clean description of how to talk, not a list of
   - `summary.md`: metrics (today vs before), what each night stage found and changed
   - `conversations.md`: recent turns with timings, ratings, judge scores and flags
   - `evals.md`: eval results (golden = the user's definition of good; regressions = harvested failures)
+  - `requests.md` (if present): things the user has asked for; consider them when choosing work
   - `previous-analysis.md` (if present): what you said last time; check whether it worked
 - A copy of the agent's self store (persona, pod settings, memory, evals) is in
   `{dossier}/self/`. Edit that copy to propose changes to the agent's self.

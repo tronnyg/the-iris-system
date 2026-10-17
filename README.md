@@ -64,6 +64,8 @@ While talking:
 | `/vad` / `/ptt` | hands-free mode / back to push-to-talk |
 | `/q` | quit; a short reflection runs and updates memory |
 
+With a headset add `--headset` (or `audio: {headset: true}` in pod.yaml): IRIS keeps listening while she talks, so you can just talk over her to interrupt. With speakers leave it off, or she'd hear herself.
+
 Other ways in: `iris talk --ui` (full-screen animated iris with live captions, hands-free; keys: Enter/Space interrupt, `t` type, `+ = -` rate, `m` hands-free/push-to-talk, `q` quit; preview it with `iris eye`), `iris talk --vad` (hands-free from the start), `iris chat` (typed, spoken replies),
 `iris chat --silent` (text only), `iris say "some text" --engine chatterbox` (hear a voice).
 

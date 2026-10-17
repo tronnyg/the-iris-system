@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import time
+import re
 
 from .. import paths, selfstore, trace
 from ..config import Settings
@@ -27,8 +29,42 @@ REFLECT_SYSTEM = (
     "only record durable facts the user stated about themselves, their life or their "
     "preferences, and only record lessons when the transcript shows a clear problem "
     "(the user corrected the assistant, repeated themselves, interrupted, or said the "
-    "answer was bad). Never record facts about the assistant itself. Reply with JSON only."
+    "answer was bad). Never record facts about the assistant itself. Wishes about how the "
+    "assistant should work (new features, \"stop when I say stop\", \"log my feedback\") are "
+    "requests, not facts about the user: put them under user_requests. Reply with JSON only."
 )
+
+# "The user wants the assistant to ...": a feature request dressed up as a fact
+_REQUEST_RE = re.compile(
+    r"\b(the assistant|assistant's|iris|the ai|feedback)\b", re.I)
+
+
+def split_requests(facts: list[str]) -> tuple[list[str], list[str]]:
+    """Facts that are really about the assistant go to requests instead of memory."""
+    keep, moved = [], []
+    for f in facts:
+        (moved if _REQUEST_RE.search(f) else keep).append(f)
+    return keep, moved
+
+
+def record_requests(items: list[str], session: str) -> list[str]:
+    """Append new feature requests (deduplicated) for the report and the escalation."""
+    from ..util import append_jsonl, read_jsonl
+    p = paths.state_dir() / "requests.jsonl"
+    seen = {r.get("text", "").lower() for r in read_jsonl(p)}
+    new = []
+    for it in items:
+        it = it.strip()
+        if it and it.lower() not in seen:
+            append_jsonl(p, {"ts": time.time(), "session": session, "text": it, "status": "open"})
+            seen.add(it.lower())
+            new.append(it)
+    return new
+
+
+def open_requests() -> list[dict]:
+    from ..util import read_jsonl
+    return [r for r in read_jsonl(paths.state_dir() / "requests.jsonl") if r.get("status", "open") == "open"]
 
 
 def _state_path():
@@ -60,6 +96,8 @@ def reflect(turns: list[dict], memory: Memory, llm: Ollama) -> tuple[Delta, str]
         '  "user_facts_remove": existing facts the transcript shows are wrong or outdated (copy exactly)\n'
         '  "lessons_add": concrete behaviour lessons, imperative ("When ..., ...") (max 2)\n'
         '  "lessons_remove": existing lessons the transcript contradicts (copy exactly)\n'
+        '  "user_requests": things the user asked the assistant to do differently or new features '
+        'they want, one short sentence each (max 3)\n'
         '  "summary": two or three sentences on what this conversation was about\n'
         "Use empty lists when nothing qualifies (that is the common case)."
     )
@@ -68,6 +106,9 @@ def reflect(turns: list[dict], memory: Memory, llm: Ollama) -> tuple[Delta, str]
                             options={"temperature": 0.2, "num_predict": 500, "num_ctx": 8192}) or {}
     delta = Delta.from_dict(out)
     delta.user_add, delta.lessons_add = delta.user_add[:3], delta.lessons_add[:2]
+    delta.user_add, moved = split_requests(delta.user_add)
+    reqs = out.get("user_requests") if isinstance(out.get("user_requests"), list) else []
+    delta.requests = [str(x).strip() for x in reqs if str(x).strip()][:3] + moved
     return delta, str(out.get("summary") or "").strip()
 
 
@@ -132,6 +173,8 @@ def run(settings: Settings | None = None, model: str | None = None, sessions: li
             delta, summary = reflect(turns, memory, llm)
             changes = memory.apply(delta, settings.pol("memory.max_user_facts", 80),
                                    settings.pol("memory.max_lessons", 30))
+            new_reqs = record_requests(getattr(delta, "requests", []), sid)
+            report.setdefault("requests", []).extend(new_reqs)
             if summary:
                 date = dt.date.fromtimestamp(turns[0].get("ts", 0) or 0).isoformat()
                 memory.add_episode(f"{date}-{sid}", f"{date}: {summary}")
