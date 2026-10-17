@@ -37,6 +37,19 @@ fail() { printf '\033[31m[fail]\033[0m %s\n' "$*" | tee -a "$LOG"; }
 run()  { echo "+ $*" >> "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
 
 CORE="$REPO/.venvs/core/bin/python"
+# Slow connections: give big wheels (torch ~800 MB, CUDA libs ~500 MB each) time, and download
+# fewer files at once so each one actually progresses. Finished files are cached, so a retry resumes.
+export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-1800}"
+export UV_CONCURRENT_DOWNLOADS="${UV_CONCURRENT_DOWNLOADS:-2}"
+retry() {  # retry <attempts> <command...>
+  local n=$1 i; shift
+  for ((i = 1; i <= n; i++)); do
+    "$@" && return 0
+    warn "attempt $i/$n failed: $*"
+    sleep 20
+  done
+  return 1
+}
 TORCH_INDEX="https://download.pytorch.org/whl/cu126"   # cu126 wheels still include Pascal (sm_61)
 
 # ---------------------------------------------------------------------------------------
@@ -101,7 +114,7 @@ fi
 
 say "Core environment (Python $PY, faster-whisper, audio)"
 make_venv core || { fail "could not create core venv"; exit 1; }
-run uv pip install --python "$CORE" -e ".[voice,dev]" || { fail "core install failed"; exit 1; }
+retry 3 run uv pip install --python "$CORE" -e ".[voice,dev]" || { fail "core install failed"; exit 1; }
 
 say "Installing the 'iris' command into ~/.local/bin"
 mkdir -p "$HOME/.local/bin"
@@ -119,8 +132,8 @@ install_kokoro() {
   say "Voice: Kokoro (torch cu126)"
   make_venv kokoro || return 1
   local P="$REPO/.venvs/kokoro/bin/python"
-  "$P" -c "import torch" 2>/dev/null || run uv pip install --python "$P" torch --index-url "$TORCH_INDEX" || return 1
-  run uv pip install --python "$P" kokoro soundfile pip || return 1
+  "$P" -c "import torch" 2>/dev/null || retry 4 run uv pip install --python "$P" torch --index-url "$TORCH_INDEX" || return 1
+  retry 3 run uv pip install --python "$P" kokoro soundfile pip || return 1
   # misaki needs spaCy's small English model; it tries to pip-install it on first use
   "$P" -c "import en_core_web_sm" 2>/dev/null || run "$P" -m spacy download en_core_web_sm || warn "spaCy model download failed; Kokoro retries on first use"
 }
@@ -129,8 +142,8 @@ install_chatterbox() {
   say "Voice: Chatterbox (torch 2.6.0 cu126)"
   make_venv chatterbox || return 1
   local P="$REPO/.venvs/chatterbox/bin/python"
-  "$P" -c "import torch" 2>/dev/null || run uv pip install --python "$P" torch==2.6.0 torchaudio==2.6.0 --index-url "$TORCH_INDEX" || return 1
-  run uv pip install --python "$P" chatterbox-tts soundfile || return 1
+  "$P" -c "import torch" 2>/dev/null || retry 4 run uv pip install --python "$P" torch==2.6.0 torchaudio==2.6.0 --index-url "$TORCH_INDEX" || return 1
+  retry 3 run uv pip install --python "$P" chatterbox-tts soundfile || return 1
 }
 
 whisper() {  # model name
@@ -139,7 +152,7 @@ whisper() {  # model name
 
 pull() {  # model
   [[ $OLLAMA_OK == 1 ]] || { warn "skipping ollama pull $1 (Ollama not running)"; return 1; }
-  run ollama pull "$1"
+  retry 3 run ollama pull "$1"
 }
 
 LLM=$("$CORE" -c "from iris.config import Settings; print(Settings.load().model('llm'))")
