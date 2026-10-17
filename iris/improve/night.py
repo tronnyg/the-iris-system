@@ -72,7 +72,8 @@ class Night:
     # -- helpers ------------------------------------------------------------------------
     def want(self, stage: str) -> bool:
         if self.only:
-            return stage in self.only
+            # a partial run still writes its report (unless you skip it), so results are visible
+            return stage in self.only or (stage == "report" and "report" not in self.skip)
         return stage not in self.skip
 
     def stage(self, name: str, fn) -> None:
