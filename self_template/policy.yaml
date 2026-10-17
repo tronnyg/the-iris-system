@@ -50,6 +50,7 @@ night:
   budget_minutes: 240
   prompt_candidates: 3
   roundtrip_sentences: 20
+  rate_clips: 8            # sentences per voice kept for the morning `iris rate` test
 
 scout:
   enabled: true

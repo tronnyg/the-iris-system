@@ -182,7 +182,8 @@ class Night:
             tts = make_tts(engine)
             try:
                 tts.load(engine_load_options(self.settings, engine), opts=synth_opts(self.settings, engine))
-                rt = teacher.roundtrip(engine, self.settings, sentences, listener, clips_dir=clips, tts=tts)
+                rt = teacher.roundtrip(engine, self.settings, sentences, listener, clips_dir=clips, tts=tts,
+                                       clip_count=int(self.settings.pol("night.rate_clips", 8)))
                 rt["load"] = tts.info
                 out["engines"][engine] = rt
                 if engine == current:
