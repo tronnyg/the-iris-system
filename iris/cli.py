@@ -142,7 +142,7 @@ def cmd_list(a) -> None:
         name = args[0] if args else None
         rows = lists.items(name, None if a.all else ("open", "suggested"))
         _print_items(rows)
-        if rows and not a.all:
+        if any(r.get("status") == "suggested" for r in rows):
             print("\n  ? = suggested by the reflection (confirm with: iris list open <id>)")
 
 

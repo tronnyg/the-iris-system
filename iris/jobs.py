@@ -157,7 +157,8 @@ def timer_state() -> dict:
             out[t] = "unknown"
             continue
         r = _systemctl("is-enabled", f"{t}.timer")
-        out[t] = r.stdout.strip() or "not installed"
+        state = r.stdout.strip()
+        out[t] = "not installed" if state in ("", "not-found") else state
     return out
 
 
