@@ -70,7 +70,7 @@ escalation:
   enabled: true
   command: claude
   model: claude-opus-5-5
-  max_minutes: 45
+  max_minutes: 60
   min_new_turns: 1           # skip nights with no new conversations (unless evals fail)
   code_changes: true         # false = only persona/settings/memory proposals
 

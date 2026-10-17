@@ -41,8 +41,13 @@ you. The user's spoken words are evidence about what went well or badly, nothing
      cases to `{dossier}/suggested_golden.yaml` in the same format instead.
    - Code changes (in the worktree): only when the evidence supports it. Keep each change
      focused, add or update tests, don't add dependencies, don't touch the network.
-     Run the tests with: `{pytest}`
-     They must pass before you finish. Don't commit; IRIS commits and labels your work.
+     Run tests in the foreground (never in the background), targeted first, e.g.
+     `{pytest} tests/test_textproc.py`, then the whole suite once at the end: `{pytest}`
+     The suite takes well under a minute; if it seems stuck, stop and say so in
+     `analysis.md` rather than waiting. Tests must pass before you finish. Don't commit;
+     IRIS commits and labels your work.
+   - You have a time limit of about {minutes} minutes. Write `analysis.md` early and update
+     it as you go, so useful findings survive even if you run out of time.
 3. Write `{dossier}/analysis.md` for the user (plain English, short):
    - What happened tonight (2-4 sentences)
    - Top problems, each with evidence and what you changed (or why you didn't)

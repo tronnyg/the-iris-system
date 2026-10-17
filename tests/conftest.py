@@ -13,6 +13,11 @@ def iris_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")   # nothing listens: no real LLM in tests
     monkeypatch.setenv("IRIS_CLAUDE_COMMAND", "iris-test-no-claude")   # never call the real Claude CLI
+    # Hermetic on a real machine too: no downloaded models, no network (else a test night run
+    # loads the real large-v3-turbo and queries PyPI/Hugging Face, and takes many minutes)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("IRIS_OFFLINE", "1")
     from iris import paths, selfstore
     paths._agent = None
     paths.ensure_dirs()

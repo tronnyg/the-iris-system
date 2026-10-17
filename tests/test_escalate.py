@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import time
 import sys
 import textwrap
 from pathlib import Path
@@ -25,6 +26,8 @@ FAKE_CLAUDE = textwrap.dedent('''\
     (dossier / "self/policy.yaml").write_text("tampered: true\\n")          # must be refused
     (dossier / "analysis.md").write_text("# Analysis\\n\\nReplies were fine. Changed the greeting.\\n")
     pathlib.Path("NOTES_FROM_CLAUDE.md").write_text("a code change\\n")    # cwd = code worktree
+    print(json.dumps({{"type": "assistant", "message": {{"content": [{{"type": "tool_use", "name": "Edit",
+          "input": {{"file_path": str(persona)}}}}]}}}}), flush=True)
     print(json.dumps({{"type": "result", "result": "Changed the greeting.", "is_error": False,
                       "session_id": "abc", "total_cost_usd": 0.0, "num_turns": 3}}))
 ''')
@@ -93,3 +96,45 @@ def test_escalation_skips_without_cli(monkeypatch):
     write_turns([turn(1)])
     r = Night(only={"escalate"}).run()
     assert "not found" in r["stages"]["escalate"]["result"]["skipped"]
+
+
+SLOW_CLAUDE = textwrap.dedent('''\
+    #!{python}
+    import os, subprocess, sys, time, pathlib
+    sys.stdin.read()
+    args = sys.argv[1:]
+    dossier = pathlib.Path(args[args.index("--add-dir") + 1])
+    (dossier / "self/memory/lessons.md").write_text("- half-finished lesson\\n")
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    pathlib.Path(os.environ["CHILD_PID_FILE"]).write_text(str(child.pid))
+    time.sleep(600)
+''')
+
+
+def test_escalation_timeout_stops_claude_and_its_children(tmp_path, monkeypatch):
+    import os
+    from iris.improve import escalate
+    fake = tmp_path / "claude"
+    fake.write_text(SLOW_CLAUDE.format(python=sys.executable))
+    fake.chmod(0o755)
+    pidfile = tmp_path / "child.pid"
+    monkeypatch.setenv("IRIS_CLAUDE_COMMAND", str(fake))
+    monkeypatch.setenv("IRIS_TEST_COMMAND", "true")
+    monkeypatch.setenv("CHILD_PID_FILE", str(pidfile))
+    orig = escalate.config
+    monkeypatch.setattr(escalate, "config", lambda st: {**orig(st), "max_minutes": 0.05})   # 3 seconds
+    _code_repo(tmp_path, monkeypatch)
+    write_turns([turn(i) for i in range(1, 3)])
+    from iris.improve.night import Night
+    r = Night(only={"metrics", "escalate"}).run()
+    res = r["stages"]["escalate"]["result"]
+    assert res["claude"]["timed_out"] and not res["claude"]["ok"]
+    assert "INCOMPLETE" in json.loads(next(paths.proposals_dir().glob("proposal_claude-*.json")).read_text())["title"]
+    child = int(pidfile.read_text())
+    time.sleep(0.5)
+    try:
+        os.kill(child, 0)
+        alive = Path(f"/proc/{child}/stat").read_text().split()[2] != "Z"
+    except ProcessLookupError:
+        alive = False
+    assert not alive, "a process started by Claude survived the timeout"

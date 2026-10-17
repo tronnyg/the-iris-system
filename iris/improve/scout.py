@@ -8,6 +8,7 @@ approve-tier proposal.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -28,6 +29,8 @@ def _state_path():
 
 
 def _get_json(url: str, params: dict | None = None):
+    if os.environ.get("IRIS_OFFLINE"):          # tests: never touch the network
+        return None
     try:
         r = requests.get(url, params=params, headers=UA, timeout=20)
         if r.status_code == 200:

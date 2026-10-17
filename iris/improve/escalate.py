@@ -36,7 +36,7 @@ DEFAULTS = {
     "enabled": True,
     "command": "claude",
     "model": "claude-opus-5-5",
-    "max_minutes": 45,
+    "max_minutes": 60,
     "max_turns_in_dossier": 150,
     "min_new_turns": 1,          # skip when nothing new happened (and nothing is failing)
     "code_changes": True,
@@ -172,34 +172,89 @@ def _claude_cmd(cfg: dict, dossier: Path, pytest_cmd: str) -> list[str]:
         f"Bash({pytest_cmd} *)", f"Bash({pytest_cmd})",
         "Bash(git diff *)", "Bash(git status *)", "Bash(git log *)",
     ])
-    return [cfg["command"], "-p", "--model", str(cfg["model"]), "--output-format", "json",
+    return [cfg["command"], "-p", "--model", str(cfg["model"]), "--output-format", "stream-json", "--verbose",
             "--permission-mode", "acceptEdits", "--allowedTools", allowed, "--add-dir", str(dossier)]
 
 
+def _describe(block: dict, cwd: Path, dossier: Path) -> str:
+    """One readable line per tool call, for the night log."""
+    inp = block.get("input") or {}
+    what = inp.get("file_path") or inp.get("pattern") or inp.get("command") or inp.get("description") or ""
+    what = str(what).replace(str(dossier) + "/", "evidence/").replace(str(cwd) + "/", "")
+    return f"{block.get('name')}: {what[:140]}"
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    """Stop Claude and everything it started (test runs included)."""
+    import signal
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        try:
+            proc.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def run_claude(cfg: dict, cwd: Path, dossier: Path, prompt: str, pytest_cmd: str) -> dict:
+    """Run Claude headless; stream its actions into the night log; stop it at the deadline."""
+    import threading
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
     cmd = _claude_cmd(cfg, dossier, pytest_cmd)
-    log.info("escalation: %s", " ".join(cmd[:5]))
+    limit = float(cfg["max_minutes"]) * 60
+    log.info("escalation: %s (up to %s min)", " ".join(cmd[:5]), cfg["max_minutes"])
     t0 = time.time()
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=open(dossier / "claude-stderr.txt", "w"), text=True, bufsize=1,
+                            start_new_session=True)       # own process group: the timeout kills its children too
+    proc.stdin.write(prompt)
+    proc.stdin.close()
+    final: dict = {}
+    stream_log = open(dossier / "claude-stream.jsonl", "w")
+
+    def reader() -> None:
+        for line in proc.stdout:
+            stream_log.write(line)
+            stream_log.flush()
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get("type") == "assistant":
+                for b in (ev.get("message") or {}).get("content") or []:
+                    if b.get("type") == "tool_use":
+                        log.info("escalation [%dm]: %s", (time.time() - t0) // 60, _describe(b, cwd, dossier))
+            elif ev.get("type") == "result":
+                final.update(ev)
+
+    th = threading.Thread(target=reader, daemon=True)
+    th.start()
+    timed_out = False
     try:
-        p = subprocess.run(cmd, input=prompt, cwd=cwd, env=env, capture_output=True, text=True,
-                           timeout=float(cfg["max_minutes"]) * 60)
+        proc.wait(timeout=limit)
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"timed out after {cfg['max_minutes']} min", "secs": round(time.time() - t0)}
-    (dossier / "claude-stdout.json").write_text(p.stdout)
-    (dossier / "claude-stderr.txt").write_text(p.stderr)
-    out: dict = {"ok": p.returncode == 0, "exit": p.returncode, "secs": round(time.time() - t0)}
-    try:
-        j = json.loads(p.stdout.strip().splitlines()[-1])
-        out.update({"result": str(j.get("result", ""))[:3000], "is_error": j.get("is_error"),
-                    "session_id": j.get("session_id"), "cost_usd_estimate": j.get("total_cost_usd"),
-                    "turns": j.get("num_turns")})
-        if j.get("is_error"):
+        timed_out = True
+        log.warning("escalation: stopping Claude after %s min", cfg["max_minutes"])
+        _kill_group(proc)
+    th.join(timeout=10)
+    stream_log.close()
+    out: dict = {"ok": proc.returncode == 0 and not timed_out, "exit": proc.returncode,
+                 "secs": round(time.time() - t0), "timed_out": timed_out}
+    if timed_out:
+        out["error"] = f"stopped after {cfg['max_minutes']} min; any changes it made are incomplete"
+    if final:
+        out.update({"result": str(final.get("result", ""))[:3000], "is_error": final.get("is_error"),
+                    "session_id": final.get("session_id"), "cost_usd_estimate": final.get("total_cost_usd"),
+                    "turns": final.get("num_turns")})
+        if final.get("is_error"):
             out["ok"] = False
-            out["error"] = str(j.get("result") or j.get("subtype"))[:500]
-    except (ValueError, IndexError):
-        if p.returncode != 0:
-            out["error"] = (p.stderr or p.stdout).strip()[-500:]
+            out["error"] = str(final.get("result") or final.get("subtype"))[:500]
+    elif proc.returncode not in (0, None) and not timed_out:
+        err = (dossier / "claude-stderr.txt").read_text().strip()
+        out["error"] = err[-500:] or f"claude exited with {proc.returncode}"
     return out
 
 
@@ -221,7 +276,7 @@ def self_changes(staged: Path, real: Path) -> tuple[dict[str, str], list[str]]:
     return changes, refused
 
 
-def propose_self(night, changes: dict[str, str], date: str, analysis_head: str) -> dict:
+def propose_self(night, changes: dict[str, str], date: str, analysis_head: str, incomplete: bool = False) -> dict:
     """Self-store proposal branch, with the eval gate run on the candidate as evidence."""
     from ..evals import load_cases
     from . import gate
@@ -248,6 +303,8 @@ def propose_self(night, changes: dict[str, str], date: str, analysis_head: str) 
                                "escalation: changes proposed by Claude\n\n" + analysis_head[:1500])
     passed = gate_res.accepted if gate_res else None
     title = "Claude's self changes (" + ", ".join(sorted({r.split('/')[0] for r in changes})) + ")"
+    if incomplete:
+        title += " (INCOMPLETE: Claude was stopped)"
     if passed is False:
         title += ": gate found regressions, check before approving"
     write_json(paths.proposals_dir() / (branch.replace("/", "_") + ".json"), {
@@ -259,22 +316,34 @@ def propose_self(night, changes: dict[str, str], date: str, analysis_head: str) 
     return out
 
 
-def finish_code(wt: Path, branch: str, pytest_cmd: list[str], date: str) -> dict | None:
+def _run_tests(cmd: list[str], cwd: Path, timeout: float = 900) -> tuple[bool, str]:
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        return False, f"tests did not finish within {int(timeout // 60)} min"
+    tail = (out or "").strip().splitlines()[-1:] or [""]
+    return proc.returncode == 0, tail[0]
+
+
+def finish_code(wt: Path, branch: str, pytest_cmd: list[str], date: str, incomplete: bool = False) -> dict | None:
     st = subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout
     if not st.strip():
         return None
-    tests = subprocess.run(pytest_cmd, cwd=wt, capture_output=True, text=True, timeout=900)
+    passed, tests_line = _run_tests(pytest_cmd, wt)
     subprocess.run(["git", "add", "-A"], cwd=wt, check=True)
     subprocess.run(["git", "-c", "user.name=IRIS escalation (Claude)", "-c", "user.email=iris-auto@localhost",
                     "commit", "-q", "-m", f"[proposal] code changes from tonight's escalation ({date})"],
                    cwd=wt, check=True)
     stat = subprocess.run(["git", "diff", "--stat", "HEAD~1"], cwd=wt, capture_output=True, text=True).stdout
-    tail = (tests.stdout or tests.stderr).strip().splitlines()[-1:] or [""]
-    info = {"branch": branch, "tests_passed": tests.returncode == 0, "tests": tail[0], "diffstat": stat[-2000:],
-            "id": f"code-{date}"}
+    info = {"branch": branch, "tests_passed": passed, "tests": tests_line, "diffstat": stat[-2000:],
+            "id": f"code-{date}", "incomplete": incomplete}
     write_json(paths.proposals_dir() / f"code_{date}.json", {
         "branch": branch, "kind": "code", "repo": str(paths.REPO), "id": f"code-{date}",
-        "title": "Claude's code changes" + ("" if info["tests_passed"] else " (tests FAIL)"),
+        "title": "Claude's code changes" + (" (INCOMPLETE: Claude was stopped)" if incomplete else "")
+                 + ("" if info["tests_passed"] else " (tests FAIL)"),
         "change": stat.strip().splitlines()[-1] if stat.strip() else "", "tests": info["tests"],
         "created": time.time(), "tier": "approve"})
     return info
@@ -312,13 +381,15 @@ def run(night) -> dict:
         if r.returncode != 0:
             return {**result, "error": "could not create a code worktree: " + r.stderr.strip()}
         try:
-            prompt = PROMPT.read_text().format(branch=branch, dossier=dossier, pytest=pytest_cmd)
+            prompt = PROMPT.read_text().format(branch=branch, dossier=dossier, pytest=pytest_cmd,
+                                               minutes=cfg["max_minutes"])
             if not cfg.get("code_changes", True):
                 prompt += "\n\nCode changes are switched off tonight: only change the self copy.\n"
             run_res = run_claude(cfg, wt, dossier, prompt, pytest_cmd)
             result["claude"] = run_res
             if cfg.get("code_changes", True):
-                code = finish_code(wt, branch, pytest_cmd.split(), f"{date}-{stamp}")
+                code = finish_code(wt, branch, pytest_cmd.split(), f"{date}-{stamp}",
+                                   incomplete=bool(run_res.get("timed_out")))
                 if code:
                     result["code"] = code
         finally:
@@ -333,7 +404,8 @@ def run(night) -> dict:
     if refused:
         result["refused_self_paths"] = refused
     if changes:
-        result["self"] = propose_self(night, changes, date, head)
+        result["self"] = propose_self(night, changes, date, head,
+                                      incomplete=bool((result.get("claude") or {}).get("timed_out")))
     if (dossier / "suggested_golden.yaml").exists():
         result["suggested_golden"] = str(dossier / "suggested_golden.yaml")
     write_json(state_path(), {"last_ts": night.t0, "last_analysis": result["analysis"],
