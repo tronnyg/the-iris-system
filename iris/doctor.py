@@ -23,6 +23,21 @@ def _hf_cached(repo_id: str) -> bool:
     return d.exists() and any(d.iterdir())
 
 
+def _arch_ok(cap: list[int], archs: list[str]) -> bool:
+    """A cubin built for sm_XY runs on any sm_XZ with Z >= Y (Pascal sm_61 runs sm_60 kernels)."""
+    major, minor = cap
+    for a in archs:
+        if a.startswith("compute_"):
+            return True
+        try:
+            n = int(a.split("_")[1])
+        except (IndexError, ValueError):
+            continue
+        if n // 10 == major and n % 10 <= minor:
+            return True
+    return False
+
+
 def _venv_torch(name: str) -> tuple[bool, str]:
     py = paths.venv_python(name)
     if not py.exists():
@@ -30,6 +45,7 @@ def _venv_torch(name: str) -> tuple[bool, str]:
     code = ("import torch,json;ok=torch.cuda.is_available();"
             "print(json.dumps({'cuda':ok,'torch':torch.__version__,"
             "'gpu':torch.cuda.get_device_name(0) if ok else None,"
+            "'cap':list(torch.cuda.get_device_capability(0)) if ok else None,"
             "'archs':torch.cuda.get_arch_list() if ok else []}))")
     try:
         out = subprocess.run([str(py), "-c", code], capture_output=True, text=True, timeout=120)
@@ -39,8 +55,9 @@ def _venv_torch(name: str) -> tuple[bool, str]:
         return False, f"torch check failed: {e}"
     if not d["cuda"]:
         return False, f"torch {d['torch']} sees no GPU (will run on CPU, slowly)"
-    if d["archs"] and "sm_61" not in d["archs"]:
-        return False, f"torch {d['torch']} lacks Pascal kernels (sm_61); reinstall with cu126 wheels"
+    if d["archs"] and d.get("cap") and not _arch_ok(d["cap"], d["archs"]):
+        return False, (f"torch {d['torch']} has no kernels for this GPU (sm_{d['cap'][0]}{d['cap'][1]}; "
+                       f"built for {' '.join(d['archs'])}); reinstall with cu126 wheels")
     return True, f"torch {d['torch']} on {d['gpu']}"
 
 

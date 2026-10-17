@@ -143,7 +143,9 @@ install_chatterbox() {
   make_venv chatterbox || return 1
   local P="$REPO/.venvs/chatterbox/bin/python"
   "$P" -c "import torch" 2>/dev/null || retry 4 run uv pip install --python "$P" torch==2.6.0 torchaudio==2.6.0 --index-url "$TORCH_INDEX" || return 1
-  retry 3 run uv pip install --python "$P" chatterbox-tts soundfile || return 1
+  retry 3 run uv pip install --python "$P" chatterbox-tts soundfile "setuptools<81" || return 1
+  # chatterbox's watermarker (perth) silently becomes None without pkg_resources -> "'NoneType' object is not callable"
+  "$P" -c "import pkg_resources" 2>/dev/null || run uv pip install --python "$P" "setuptools<81"
 }
 
 whisper() {  # model name
