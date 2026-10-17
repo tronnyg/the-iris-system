@@ -131,6 +131,7 @@ class Recorder:
         self.last_end: float | None = None
         self.last_audio: np.ndarray | None = None
         self.allow_merge = False         # pipeline sets True until the reply starts playing
+        self._carry = False              # merge the next utterance into the last, however late
         self.stream = None
         self.running = False
 
@@ -203,7 +204,8 @@ class Recorder:
                            and (now - self.last_end) * 1000 <= self.resume_window_ms + self.vad.cfg.min_speech_ms)
                 if self.on_speech_start:
                     self.on_speech_start()
-                self._resuming = resumed
+                self._resuming = resumed or self._carry
+                self._carry = False
             elif kind == "end":
                 audio = info["audio"]
                 merged = getattr(self, "_resuming", False) and self.last_audio is not None
@@ -217,6 +219,12 @@ class Recorder:
                                             speech_ms=info["speech_ms"],
                                             trailing_silence_ms=info["trailing_silence_ms"],
                                             merged_after_resume=merged))
+
+    def carry_over(self) -> None:
+        """The reply to the last utterance was abandoned because the user kept talking:
+        prepend it to the speech now starting, however long the pause was, so the
+        question isn't lost. Call from `on_speech_start`."""
+        self._carry = self.last_audio is not None
 
     def set_paused(self, paused: bool) -> None:
         self.paused = paused

@@ -7,6 +7,7 @@ there, which leaves the GPU's limited memory for the LLM and the voice.
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -20,6 +21,19 @@ HALLUCINATIONS = {
     "thank you.", "thanks for watching!", "thanks for watching.", "thank you for watching.",
     "you", "bye.", "subtitles by the amara.org community", "please subscribe.", ".",
 }
+
+
+# Hesitation sounds. An utterance made only of these isn't a turn: the user is thinking,
+# and answering it ("Is there anything else I can help with?") talks over them.
+# Backchannels that can be real answers (mm-hmm, uh-huh, yeah, okay, no) are not here.
+FILLERS = {"um", "umm", "uh", "uhh", "er", "erm", "ah", "ahh", "oh", "mm", "mmm", "hm", "hmm", "hmmm"}
+
+
+def is_filler(text: str) -> bool:
+    words = re.findall(r"[a-z]+(?:-[a-z]+)*", text.lower())
+    if "".join(words).replace("-", "") in ("mmhmm", "mmhm", "mhm", "uhhuh"):    # "mm hmm" = "mm-hmm"
+        return False
+    return bool(words) and all(w in FILLERS for w in words)
 
 
 @dataclass

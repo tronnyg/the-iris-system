@@ -16,9 +16,13 @@ from typing import Iterator
 
 import requests
 
-OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-if not OLLAMA_URL.startswith("http"):
-    OLLAMA_URL = "http://" + OLLAMA_URL
+def ollama_url() -> str:
+    """$OLLAMA_HOST, read when a client is made (not at import, so tests can point it elsewhere)."""
+    url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+    return url if url.startswith("http") else "http://" + url
+
+
+OLLAMA_URL = ollama_url()
 
 
 @dataclass
@@ -50,9 +54,9 @@ class Cancel:
 
 
 class Ollama:
-    def __init__(self, model: str, url: str = OLLAMA_URL, keep_alive: str = "30m"):
+    def __init__(self, model: str, url: str | None = None, keep_alive: str = "30m"):
         self.model = model
-        self.url = url.rstrip("/")
+        self.url = (url or ollama_url()).rstrip("/")
         self.keep_alive = keep_alive
 
     # -- streaming chat ---------------------------------------------------------------
