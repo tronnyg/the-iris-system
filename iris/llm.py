@@ -1,0 +1,182 @@
+"""LLM access through Ollama's local HTTP API (http://127.0.0.1:11434).
+
+One small adapter: given messages, stream text deltas and finish with timing stats.
+Swapping the brain = changing `models.llm` in pod.yaml to any model Ollama can run.
+Cancelling (barge-in) closes the HTTP stream, which stops generation server-side.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+import time
+from dataclasses import dataclass, field
+from typing import Iterator
+
+import requests
+
+OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+if not OLLAMA_URL.startswith("http"):
+    OLLAMA_URL = "http://" + OLLAMA_URL
+
+
+@dataclass
+class LLMStats:
+    model: str = ""
+    ttft_s: float | None = None          # request -> first visible token
+    total_s: float | None = None
+    load_s: float | None = None          # model load time reported by Ollama
+    prompt_tokens: int | None = None
+    prompt_eval_s: float | None = None
+    tokens: int | None = None
+    tok_s: float | None = None
+    done_reason: str | None = None       # "stop" | "length" | "cancelled" | "error"
+    error: str | None = None
+
+    def as_dict(self) -> dict:
+        return {k: v for k, v in self.__dict__.items()}
+
+
+@dataclass
+class Cancel:
+    event: threading.Event = field(default_factory=threading.Event)
+
+    def set(self) -> None:
+        self.event.set()
+
+    def is_set(self) -> bool:
+        return self.event.is_set()
+
+
+class Ollama:
+    def __init__(self, model: str, url: str = OLLAMA_URL, keep_alive: str = "30m"):
+        self.model = model
+        self.url = url.rstrip("/")
+        self.keep_alive = keep_alive
+
+    # -- streaming chat ---------------------------------------------------------------
+    def stream(self, messages: list[dict], options: dict | None = None,
+               cancel: Cancel | None = None, stats: LLMStats | None = None,
+               think: bool = False, fmt: str | dict | None = None) -> Iterator[str]:
+        stats = stats if stats is not None else LLMStats()
+        stats.model = self.model
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            "think": think,
+            "keep_alive": self.keep_alive,
+            "options": options or {},
+        }
+        if fmt is not None:
+            body["format"] = fmt
+        t0 = time.perf_counter()
+        try:
+            resp = requests.post(f"{self.url}/api/chat", json=body, stream=True, timeout=(5, 300))
+        except requests.RequestException as e:
+            stats.done_reason, stats.error = "error", f"cannot reach Ollama at {self.url}: {e}"
+            raise LLMError(stats.error) from e
+        if resp.status_code == 400 and think is False and "think" in resp.text.lower():
+            # model without a thinking switch: retry without the flag
+            body.pop("think")
+            resp = requests.post(f"{self.url}/api/chat", json=body, stream=True, timeout=(5, 300))
+        if resp.status_code != 200:
+            stats.done_reason, stats.error = "error", f"Ollama {resp.status_code}: {resp.text[:300]}"
+            raise LLMError(stats.error)
+        try:
+            for line in resp.iter_lines():
+                if cancel is not None and cancel.is_set():
+                    stats.done_reason = "cancelled"
+                    break
+                if not line:
+                    continue
+                data = json.loads(line)
+                if "error" in data:
+                    stats.done_reason, stats.error = "error", data["error"]
+                    raise LLMError(data["error"])
+                piece = (data.get("message") or {}).get("content") or ""
+                if piece:
+                    if stats.ttft_s is None:
+                        stats.ttft_s = time.perf_counter() - t0
+                    yield piece
+                if data.get("done"):
+                    stats.done_reason = data.get("done_reason") or "stop"
+                    ns = 1e-9
+                    stats.load_s = (data.get("load_duration") or 0) * ns or None
+                    stats.prompt_tokens = data.get("prompt_eval_count")
+                    stats.prompt_eval_s = (data.get("prompt_eval_duration") or 0) * ns or None
+                    stats.tokens = data.get("eval_count")
+                    ev = (data.get("eval_duration") or 0) * ns
+                    stats.tok_s = (stats.tokens / ev) if stats.tokens and ev else None
+                    break
+        finally:
+            resp.close()
+            stats.total_s = time.perf_counter() - t0
+
+    def complete(self, messages: list[dict], options: dict | None = None, think: bool = False,
+                 fmt: str | dict | None = None) -> str:
+        return "".join(self.stream(messages, options=options, think=think, fmt=fmt))
+
+    def complete_json(self, messages: list[dict], options: dict | None = None) -> dict | None:
+        """Ask for JSON output and parse it; None if the model returned garbage."""
+        text = self.complete(messages, options=options, fmt="json")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            start, end = text.find("{"), text.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    return json.loads(text[start:end + 1])
+                except json.JSONDecodeError:
+                    return None
+            return None
+
+    # -- housekeeping -----------------------------------------------------------------
+    def available(self) -> bool:
+        try:
+            return requests.get(f"{self.url}/api/tags", timeout=3).status_code == 200
+        except requests.RequestException:
+            return False
+
+    def installed_models(self) -> list[str]:
+        try:
+            r = requests.get(f"{self.url}/api/tags", timeout=5)
+            return [m["name"] for m in r.json().get("models", [])]
+        except (requests.RequestException, ValueError, KeyError):
+            return []
+
+    def has_model(self, name: str | None = None) -> bool:
+        name = name or self.model
+        names = self.installed_models()
+        return name in names or f"{name}:latest" in names
+
+    def warm(self) -> None:
+        """Load the model into memory now so the first reply isn't slow."""
+        requests.post(f"{self.url}/api/generate",
+                      json={"model": self.model, "prompt": "", "keep_alive": self.keep_alive},
+                      timeout=300)
+
+    def unload(self, model: str | None = None) -> None:
+        try:
+            requests.post(f"{self.url}/api/generate",
+                          json={"model": model or self.model, "prompt": "", "keep_alive": 0}, timeout=60)
+        except requests.RequestException:
+            pass
+
+    def running(self) -> list[dict]:
+        """Ollama's /api/ps: which models are loaded and how much is on the GPU."""
+        try:
+            return requests.get(f"{self.url}/api/ps", timeout=5).json().get("models", [])
+        except (requests.RequestException, ValueError):
+            return []
+
+    def version(self) -> str | None:
+        try:
+            return requests.get(f"{self.url}/api/version", timeout=3).json().get("version")
+        except (requests.RequestException, ValueError):
+            return None
+
+
+class LLMError(RuntimeError):
+    pass

@@ -1,0 +1,72 @@
+# IRIS approval policy.
+#
+# This file is LOCKED: only you edit it. The improvement loops refuse to commit any
+# change that touches a locked path, and the gate rejects candidates that try.
+#
+# Tiers
+#   auto       the system applies the change itself, logs it, and reverts it
+#              automatically if the metric it targeted gets worse
+#   approve    the system prepares and tests the change overnight; it only ships
+#              when you run `iris approve <id>`
+#   recommend  the system researches (and benchmarks if possible) and tells you;
+#              you act on it yourself (installs, downloads, model swaps)
+#   locked     never changed by the system
+
+surfaces:
+  memory/user.md: auto              # facts about you
+  memory/lessons.md: auto           # behaviour playbook (ACE-style, incremental)
+  memory/episodes/: auto            # session summaries
+  evals/regressions/: auto          # failures harvested from real use
+  pods/voice/pronunciations.yaml: auto
+  pods/voice/pod.yaml: per-knob     # each knob in pod.yaml declares its own tier
+  persona/: approve                 # the active persona file (prompt, cue rules, delivery)
+  code: approve                     # code changes always need you
+  models: recommend                 # new models / packages / versions
+  agent.yaml: locked                # which persona this agent wears
+  policy.yaml: locked
+  evals/golden/: locked             # your definition of "good"
+
+locked_paths:
+  - agent.yaml
+  - policy.yaml
+  - evals/golden/
+
+rollback:
+  min_samples: 15        # turns needed before an auto change is judged
+  tolerance: 0.10        # revert if the targeted metric is >10% worse than before
+  max_age_days: 7        # judge with whatever data exists after this long
+
+gate:
+  max_new_failures: 0    # a candidate may not turn any passing eval into a failure
+  min_fixes: 1           # ...and must fix at least one failing case (prompt changes)
+
+memory:
+  max_user_facts: 80
+  max_lessons: 30
+
+night:
+  judge_model: qwen3:8b          # bigger, slower model used only overnight
+  teacher_stt: large-v3-turbo    # bigger Whisper used only overnight
+  budget_minutes: 240
+  prompt_candidates: 3
+  roundtrip_sentences: 20
+
+scout:
+  enabled: true
+  allow_downloads_gb: 0          # 0 = never download on its own; it tells you the command
+  ollama_candidates:             # benchmarked only if you've already pulled them
+    - gemma3:4b
+    - qwen3:1.7b
+  pypi_packages: [faster-whisper, kokoro, misaki, chatterbox-tts, ctranslate2]
+  hf_tasks: [text-to-speech, automatic-speech-recognition]
+
+code_agent:
+  # Optional: a local coding agent that drafts code fixes for failure clusters on a
+  # branch of the code repo. Disabled by default (small local models are weak engineers).
+  # Example: "aider --model ollama_chat/qwen2.5-coder:7b --yes --message-file {brief}"
+  command: null
+
+privacy:
+  keep_audio_days: 14
+  keep_traces_days: 365
+  record_audio: true             # needed for overnight STT grading and replays

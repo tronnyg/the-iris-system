@@ -1,0 +1,9 @@
+[Unit]
+Description=IRIS nightly improvement loop
+After=network-online.target ollama.service
+
+[Service]
+Type=oneshot
+ExecStart=@IRIS@ night
+Nice=10
+TimeoutStartSec=6h

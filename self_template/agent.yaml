@@ -1,0 +1,6 @@
+# Which persona this agent wears. The persona is a swappable part like any model:
+# drop a new file into persona/ and point `persona:` at it (or run `iris persona use <name>`).
+# Memory, settings and evals stay; only the personality changes.
+#
+# Locked: only you change this file.
+persona: iris

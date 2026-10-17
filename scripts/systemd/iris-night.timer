@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the IRIS improvement loop every night
+
+[Timer]
+OnCalendar=*-*-* 03:00
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

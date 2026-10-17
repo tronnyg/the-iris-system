@@ -1,0 +1,13 @@
+# Fixed sentences for the overnight speech round trip (TTS -> Whisper -> compare).
+# They target the usual weak spots: numbers, dates, names, abbreviations, punctuation.
+sentences:
+  - "Good morning. It is twenty past seven and the weather looks clear."
+  - "Your GTX 1070 has 8 gigabytes of memory."
+  - "The meeting moved to 3:45 on Thursday the 14th."
+  - "It costs 1,250 rand, or roughly 70 dollars."
+  - "Dr. Smith arrived at 9 a.m. with the results."
+  - "There were 12,345 visitors in 2026."
+  - "Turn left on Main Street, then continue for 2.5 kilometres."
+  - "IRIS online. All systems nominal."
+  - "I can't see your calendar, but I can help you plan the day."
+  - "The quick brown fox jumps over the lazy dog."

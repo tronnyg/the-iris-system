@@ -1,0 +1,47 @@
+# Voice pod manifest: the contract between the pod and the improvement loops.
+#
+# knobs     what the loops may tune. Each knob has bounds and a tier (see policy.yaml).
+#           `auto` knobs are tuned overnight within [min, max] and reverted if worse.
+# models    the swappable body parts. Swapping is `approve`/`recommend` tier.
+# metrics   what is measured from traces (see iris/metrics.py).
+
+pod: voice
+version: 1
+interfaces: {in: audio, out: audio, emits: trace/v1}
+resources:
+  gpu_vram_mb: 900          # Kokoro; Chatterbox needs ~3000
+  constraints: [pascal_sm61, no_flash_attn, no_bf16]
+
+models:
+  llm: {value: "qwen3:4b", tier: approve}
+  stt: {value: "base.en", choices: [tiny.en, base.en, small.en, distil-small.en], tier: auto}
+  tts_engine: {value: kokoro, choices: [kokoro, chatterbox], tier: approve}
+
+knobs:
+  vad.silence_ms:            {value: 700,  min: 350,  max: 1400, step: 50,   tier: auto}
+  vad.threshold_db:          {value: 12,   min: 6,    max: 24,   step: 1,    tier: auto}
+  vad.min_speech_ms:         {value: 250,  min: 100,  max: 600,  step: 50,   tier: auto}
+  vad.resume_window_ms:      {value: 1000, min: 400,  max: 2000, step: 100,  tier: approve}
+  stt.beam_size:             {value: 1,    min: 1,    max: 5,    step: 1,    tier: auto}
+  llm.temperature:           {value: 0.7,  min: 0.2,  max: 1.0,  step: 0.05, tier: auto}
+  llm.num_predict:           {value: 220,  min: 80,   max: 450,  step: 20,   tier: auto}
+  llm.num_ctx:               {value: 4096, min: 2048, max: 8192, step: 1024, tier: approve}
+  llm.history_turns:         {value: 12,   min: 4,    max: 24,   step: 2,    tier: auto}
+  splitter.min_chunk_chars:  {value: 60,   min: 20,   max: 160,  step: 10,   tier: auto}
+  tts.speed:                 {value: 1.0,  min: 0.85, max: 1.2,  step: 0.05, tier: approve}
+
+tts:
+  kokoro:
+    voice: "af_heart:60,bf_emma:40"   # weighted mix, "name:percent,..."
+    lang: a                           # a = American G2P, b = British
+  chatterbox:
+    variant: turbo                    # turbo | original
+    reference: null                   # path to a >5 s clip to clone; null = built-in voice
+    temperature: 0.8
+    exaggeration: 0.5                 # original only
+
+targets:                              # what "good" means numerically
+  first_audio_s: 1.5
+  premature_eos_rate: 0.03
+  stt_wer: 0.10
+  reply_words: 45

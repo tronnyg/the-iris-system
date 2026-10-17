@@ -1,0 +1,33 @@
+[project]
+name = "iris"
+version = "0.1.0"
+description = "IRIS: a local, self-improving voice assistant (body = swappable models, self = versioned memory, persona, settings and evals)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "requests>=2.31",
+    "pyyaml>=6.0",
+    "soundfile>=0.12",
+    "num2words>=0.5.13",
+]
+
+[project.optional-dependencies]
+# Live audio + speech-to-text. Installed by setup.sh into the core venv.
+voice = [
+    "sounddevice>=0.4.6",
+    "faster-whisper>=1.1",
+]
+dev = ["pytest>=8"]
+
+[project.scripts]
+iris = "iris.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["iris*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,15 @@
+# How text is made speakable right before synthesis (auto tier).
+#
+# rules     rewrite rules, enabled per voice engine. The night loop tries switching
+#           each rule on/off with a speech round trip (voice -> Whisper -> compare)
+#           and keeps a change only if the voice was understood better.
+#           Available: thousands, decimals, times, ordinals, currency
+# entries   exact replacements, "written form": "spoken form". Yours to edit.
+rules:
+  kokoro: []
+  chatterbox: []
+entries:
+  "GPU": "G P U"
+  "VRAM": "V RAM"
+  "e.g.": "for example"
+  "i.e.": "that is"
