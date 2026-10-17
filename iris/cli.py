@@ -24,7 +24,8 @@ def cmd_talk(a) -> None:
     ui = getattr(a, "ui", False)
     s = Session(mode="vad" if (a.vad or ui) and not getattr(a, "ptt", False) else "ptt", engine=a.engine,
                 speak=not a.silent, listen=not a.no_mic, no_audio_device=a.no_audio,
-                mic=getattr(a, "mic", None), ui=ui, headset=True if getattr(a, "headset", False) else None)
+                mic=getattr(a, "mic", None), ui=ui, headset=True if getattr(a, "headset", False) else None,
+                wake=True if getattr(a, "wake", False) else None, tools=not getattr(a, "no_tools", False))
     s.run()
     if not a.no_sleep:
         print("Reflecting on this session (memory + lessons) ...", flush=True)
@@ -379,6 +380,9 @@ def main(argv=None) -> None:
         p.add_argument("--no-sleep", action="store_true", help="skip the reflection after the session")
         p.add_argument("--mic", help="input device: index or part of its name (see `iris mic --list`)")
         p.add_argument("--ui", action="store_true", help="full-screen animated eye with live captions (hands-free)")
+        p.add_argument("--wake", action="store_true",
+                       help="only respond after the wake word (\"Iris ...\"); other speech is ignored and not kept")
+        p.add_argument("--no-tools", action="store_true", help="no web search / calculator / clock this session")
         p.add_argument("--headset", action="store_true",
                        help="you wear a headset: keep listening while IRIS talks, so talking over her interrupts")
         p.add_argument("--ptt", action="store_true", help="with --ui: push-to-talk (Space) instead of hands-free")

@@ -38,8 +38,9 @@ from .util import log
 class Session:
     def __init__(self, mode: str = "ptt", engine: str | None = None, speak: bool = True,
                  listen: bool = True, no_audio_device: bool = False, mic=None, ui: bool = False,
-                 headset: bool | None = None):
+                 headset: bool | None = None, wake: bool | None = None, tools: bool = True):
         self.mic = mic
+        self.use_tools = tools
         self.headset_flag = headset
         # turn bookkeeping (utterance ids from the recorder)
         self.state_lock = threading.Lock()
@@ -67,7 +68,13 @@ class Session:
         self.running = True
         self.busy_job = False
         self.conv: Conversation | None = None
+        # None = decide from the microphone's name once it is opened
         self.headset = bool(headset) if headset is not None else headset_mode(self.s)
+        wcfg = self.s.pod.get("wake") or {}
+        self.wake = bool(wake) if wake is not None else bool(wcfg.get("enabled", False))
+        self.wake_words = [str(w).lower() for w in (wcfg.get("words") or ["iris"])]
+        self.follow_up_s = float(wcfg.get("follow_up_s", 12))
+        self.awake_until = 0.0
 
     # -- startup ------------------------------------------------------------------------
     def boot(self) -> None:
@@ -94,6 +101,8 @@ class Session:
                             silence_ms=int(self.s.knob("vad.silence_ms", 700)),
                             min_speech_ms=int(self.s.knob("vad.min_speech_ms", 250)))
             device = mic_device(self.mic, self.s)
+            if self.headset is None:
+                self.headset = looks_like_headset(mic_name(device))
             self.recorder = Recorder(self._on_utterance, mode=self.mode, vad=vad,
                                      on_speech_start=self._on_speech_start,
                                      resume_window_ms=int(self.s.knob("vad.resume_window_ms", 1000)),
@@ -101,9 +110,18 @@ class Session:
             self.recorder.start()
             print(f"  mic: {mic_name(device)}" + ("   (hands-free: just talk)" if self.mode == "vad" else "")
                   + ("   headset mode: talk over IRIS to interrupt" if self.headset else ""), flush=True)
+        from . import tools as tool_mod
+        tools = tool_mod.registry(self.s) if self.use_tools else {}
         self.conv = Conversation(self.s, self.llm, self.tts, self.player, self.writer, self.memory,
                                  on_text=lambda t: self.ui is None and print(f"  {name}: {t}", flush=True),
-                                 on_first_audio_queued=self._on_first_audio)
+                                 on_first_audio_queued=self._on_first_audio,
+                                 tools=tools, on_tool=self._on_tool)
+        if tools:
+            how = "native" if self.conv.tools_native() else "text protocol"
+            print(f"  tools: {', '.join(tools)} ({how})", flush=True)
+        if self.wake:
+            print(f"  wake word: say \"{self.wake_words[0].title()}\" first; stays awake "
+                  f"{self.follow_up_s:.0f}s after each reply", flush=True)
         self.writer.event("session_start", mode=self.mode, agent=paths.agent(),
                           persona=self.s.persona_name, config={"self": selfstore.head(), "knobs": self.s.knobs()},
                           models={"llm": self.llm.model, "stt": self.stt.name if self.stt else None,
@@ -255,15 +273,55 @@ class Session:
             else:
                 print(f"  (heard \"{tr.text.strip()}\": listening on)", flush=True)
             return
+        text = tr.text
+        if self.wake and utt.method == "vad":
+            awake = utt.t_end - utt.speech_ms / 1000 <= self.awake_until     # began while still awake
+            rest = strip_wake(text, self.wake_words)
+            if rest is None and not awake:
+                self._mark_handled(utt.includes)    # not for IRIS: forget it (audio deleted too)
+                self._forget_audio(audio_rel)
+                return
+            if rest is not None:
+                text = rest
+                if not re.search(r"\w", text):        # just "Iris": say yes and listen
+                    self._mark_handled(utt.includes)
+                    self.awake_until = time.perf_counter() + self.follow_up_s
+                    self.conv._say_simple(str(self.s.persona.get("wake_ack") or "Yes?"), self.speak)
+                    self.awake_until = time.perf_counter() + self.follow_up_s
+                    return
         if self.ui:
-            self.ui.user_said(tr.text)
+            self.ui.user_said(text)
         else:
-            print(f"  you: {tr.text}", flush=True)
-        res = self.conv.respond(tr.text, mode=utt.method, t_end=utt.t_end, stt=tr.as_dict(),
+            print(f"  you: {text}", flush=True)
+        res = self.conv.respond(text, mode=utt.method, t_end=utt.t_end, stt=tr.as_dict(),
                                 endpoint=endpoint, audio_in=audio_rel, stt_done_s=stt_done, speak=self.speak)
         if res.cancelled != "resume":
             self._mark_handled(utt.includes)
+        self.awake_until = time.perf_counter() + self.follow_up_s
 
+    def _forget_audio(self, rel) -> None:
+        if rel:
+            try:
+                from .trace import audio_path
+                p = audio_path(rel)
+                if p:
+                    p.unlink()
+            except Exception:
+                pass
+
+    def _on_tool(self, name: str, args: dict) -> None:
+        what = args.get("query") or args.get("expression") or ""
+        label = {"web_search": "searching the web", "calculator": "calculating", "current_time": "checking the time"}
+        msg = f"{label.get(name, name)}{': ' + str(what) if what else ''}"
+        self.writer.event("tool", name=name, args=args)
+        if self.ui:
+            self.ui.note(msg + " ...")
+        else:
+            print(f"  ({msg})", flush=True)
+
+    def asleep(self) -> bool:
+        return self.wake and time.perf_counter() > self.awake_until and not self.busy_job \
+            and not self.jobs.unfinished_tasks
     def stt_context(self) -> str | None:
         """A hint for Whisper: what IRIS just said plus names and rare words from the
         conversation, so a name heard once is spelled the same way next time."""
@@ -333,10 +391,12 @@ class Session:
         p, r = self.player, self.recorder
         if p is not None and p.active and p.stats.t_first_audio is not None:
             return "speaking", p.level
-        if r is not None and (r.recording or r.vad.in_speech):
+        if r is not None and (r.recording or r.vad.in_speech) and not self.asleep():
             return "hearing", getattr(r, "level", 0.0)
         if self.busy_job or self.jobs.unfinished_tasks or (self.conv and self.conv.busy()):
             return "thinking", 0.0
+        if self.asleep():
+            return "asleep", 0.0
         return "idle", 0.0
 
     def _quiet_logs(self) -> None:
@@ -492,6 +552,32 @@ class Session:
             pass
 
 
+_WAKE_VARIANTS = {"iris": r"(?:irys|irus|iras|ires|eyris|irish|iris's)"}
+
+
+def strip_wake(text: str, words: list[str]) -> str | None:
+    """'Hey Iris, what's the time?' -> "what's the time?"; None if the wake word isn't there.
+
+    The exact word counts anywhere ("what do you think, Iris?"); Whisper's near-misses
+    (Irish, Irus, ...) only at the start or the end, where a name used as a call would be.
+    In the middle of a sentence the word is kept ("the iris of the eye" stays intact).
+    """
+    lead = r"(?:(?:hey|hi|okay|ok|yo|so)[\s,]+)?"
+    for w in words:
+        exact = re.escape(w)
+        near = _WAKE_VARIANTS.get(w)
+        alt = f"(?:{exact}|{near})" if near else exact
+        m = re.match(rf"\s*{lead}{alt}\b[\s,.!?:;-]*", text, re.I)          # at the start
+        if m:
+            return text[m.end():].strip()
+        m = re.search(rf"[\s,]*\b{alt}[\s.!?]*$", text, re.I)               # at the end
+        if m:
+            return text[:m.start()].strip(" ,")
+        if re.search(rf"\b{exact}\b", text, re.I):                         # anywhere: wake, keep text
+            return text
+    return None
+
+
 _COMMON_CAPS = {"i", "i'm", "i've", "i'll", "i'd", "iris", "okay", "ok", "yes", "no", "monday", "tuesday",
                 "wednesday", "thursday", "friday", "saturday", "sunday"}
 
@@ -501,13 +587,19 @@ def _echoes_prompt(text: str, prompt: str) -> bool:
     return len(t) > 12 and t in " ".join(re.findall(r"\w+", prompt.lower()))
 
 
-def headset_mode(settings: Settings | None = None) -> bool:
+def headset_mode(settings: Settings | None = None) -> bool | None:
     """Headset (mic can't hear the speaker): keep listening while IRIS talks, for barge-in.
     Set with --headset, IRIS_HEADSET=1, or audio: {headset: true} in pod.yaml."""
     env = os.environ.get("IRIS_HEADSET")
     if env is not None:
         return env.strip().lower() in ("1", "true", "yes", "on")
-    return bool(((settings.pod.get("audio") or {}).get("headset")) if settings else False)
+    val = ((settings.pod.get("audio") or {}).get("headset")) if settings else None
+    return None if val in (None, "auto") else bool(val)
+
+
+def looks_like_headset(name: str) -> bool:
+    return bool(re.search(r"headset|headphone|earbud|earphone|airpods|buds|arctis|hyperx|h510|wh-1000",
+                          name or "", re.I))
 
 
 def mic_device(explicit=None, settings: Settings | None = None):

@@ -54,3 +54,5 @@ delivery:
     pause_ms: {pause: 350, "long pause": 800}
 
 greeting: "Hello. IRIS online."
+wake_ack: "Yes?"                 # said when you only say the wake word
+continue_offer: "Want me to keep going?"

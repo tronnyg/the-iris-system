@@ -16,6 +16,7 @@ dependencies = [
 voice = [
     "sounddevice>=0.4.6",
     "faster-whisper>=1.1",
+    "ddgs>=9.0",          # web search tool (DuckDuckGo, no key)
 ]
 dev = ["pytest>=8"]
 

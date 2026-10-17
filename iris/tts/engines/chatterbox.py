@@ -82,12 +82,13 @@ class Engine:
             prefix = ""
             if self.variant == "turbo":
                 prefix = "".join(f"[{e}] " for e in seg.events if e in native)
+            temp = float(opts.get("temperature", self.temperature))
+            exag = float(opts.get("exaggeration", self.exaggeration))
             for piece in _pieces(seg.text):
                 if self.variant == "turbo":
-                    wav = self.model.generate(prefix + piece, temperature=self.temperature)
+                    wav = self.model.generate(prefix + piece, temperature=temp)
                 else:
-                    wav = self.model.generate(piece, exaggeration=self.exaggeration,
-                                              temperature=self.temperature)
+                    wav = self.model.generate(piece, exaggeration=exag, temperature=temp)
                 prefix = ""
                 out.append(wav.squeeze(0).detach().cpu().numpy().astype(np.float32))
         audio = np.concatenate(out) if out else np.zeros(0, dtype=np.float32)

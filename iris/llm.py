@@ -62,7 +62,9 @@ class Ollama:
     # -- streaming chat ---------------------------------------------------------------
     def stream(self, messages: list[dict], options: dict | None = None,
                cancel: Cancel | None = None, stats: LLMStats | None = None,
-               think: bool = False, fmt: str | dict | None = None) -> Iterator[str]:
+               think: bool = False, fmt: str | dict | None = None,
+               tools: list[dict] | None = None, tool_calls: list | None = None) -> Iterator[str]:
+        """Yield text deltas. With `tools`, structured tool calls are appended to `tool_calls`."""
         stats = stats if stats is not None else LLMStats()
         stats.model = self.model
         body = {
@@ -75,6 +77,8 @@ class Ollama:
         }
         if fmt is not None:
             body["format"] = fmt
+        if tools:
+            body["tools"] = tools
         t0 = time.perf_counter()
         try:
             resp = requests.post(f"{self.url}/api/chat", json=body, stream=True, timeout=(5, 300))
@@ -99,7 +103,10 @@ class Ollama:
                 if "error" in data:
                     stats.done_reason, stats.error = "error", data["error"]
                     raise LLMError(data["error"])
-                piece = (data.get("message") or {}).get("content") or ""
+                msg = data.get("message") or {}
+                if msg.get("tool_calls") and tool_calls is not None:
+                    tool_calls.extend(msg["tool_calls"])
+                piece = msg.get("content") or ""
                 if piece:
                     if stats.ttft_s is None:
                         stats.ttft_s = time.perf_counter() - t0
@@ -135,6 +142,22 @@ class Ollama:
                 except json.JSONDecodeError:
                     return None
             return None
+
+    # -- capabilities -------------------------------------------------------------------
+    _caps: dict = {}
+
+    def capabilities(self) -> list[str]:
+        """What Ollama says the model can do ("completion", "tools", "thinking", "vision")."""
+        if self.model not in Ollama._caps:
+            try:
+                r = requests.post(f"{self.url}/api/show", json={"model": self.model}, timeout=5)
+                Ollama._caps[self.model] = list((r.json() or {}).get("capabilities") or []) if r.ok else []
+            except (requests.RequestException, ValueError):
+                return []
+        return Ollama._caps[self.model]
+
+    def supports_tools(self) -> bool:
+        return "tools" in self.capabilities()
 
     # -- housekeeping -----------------------------------------------------------------
     def available(self) -> bool:

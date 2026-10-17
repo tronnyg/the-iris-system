@@ -31,10 +31,26 @@ knobs:
   llm.history_turns:         {value: 12,   min: 4,    max: 24,   step: 2,    tier: auto}
   splitter.min_chunk_chars:  {value: 60,   min: 20,   max: 160,  step: 10,   tier: auto}
   tts.speed:                 {value: 1.0,  min: 0.85, max: 1.2,  step: 0.05, tier: approve}
+  # live voice tuning: say "too fast", "louder", "too deep", "too monotone", "longer pauses", "undo"
+  tts.volume_db:             {value: 0,    min: -12,  max: 12,   step: 2,    tier: approve}
+  tts.pitch_semitones:       {value: 0,    min: -4,   max: 4,    step: 1,    tier: approve}
+  tts.expressiveness:        {value: 0.4,  min: 0.0,  max: 1.0,  step: 0.2,  tier: approve}
+  tts.sentence_gap_ms:       {value: 0,    min: 0,    max: 800,  step: 100,  tier: approve}
 
 audio:
   input_device: null      # index or part of a name from `iris mic --list` (null = system default)
-  headset: false          # true: keep listening while IRIS talks, so talking over her interrupts
+  headset: auto           # true: keep listening while IRIS talks, so talking over her interrupts;
+                          # auto: on when the mic's name looks like a headset; false: never
+
+wake:
+  enabled: false          # true (or `iris talk --wake`): only respond after the wake word
+  words: [iris]
+  follow_up_s: 12         # stay awake this long after each reply, so follow-ups need no wake word
+
+tools:
+  enabled: [web_search, calculator, current_time]
+  searxng_url: null       # your own SearXNG (fully self-hosted search); null = DuckDuckGo via ddgs
+  max_results: 5
 
 tts:
   kokoro:

@@ -64,6 +64,12 @@ While talking:
 | `/vad` / `/ptt` | hands-free mode / back to push-to-talk |
 | `/q` | quit; a short reflection runs and updates memory |
 
+**Wake word:** `iris talk --wake` (or `wake: {enabled: true}` in pod.yaml) only responds after "Iris ...", e.g. "Iris, what's the time?" or just "Iris" (she says "Yes?" and listens). After each reply she stays awake for 12 s so follow-ups need no wake word. Speech without the wake word is dropped and its audio deleted.
+
+**Tools:** web search (DuckDuckGo via `ddgs`, no key; or your own SearXNG via `tools.searxng_url`), a calculator and the clock. Models that Ollama marks as tool-capable use them natively; others use a one-line text protocol. IRIS says "Let me look that up." while searching. Turn off per session with `--no-tools`, or choose in pod.yaml `tools: {enabled: [...]}`.
+
+**Tune the voice by talking:** "you're talking too fast", "slower", "louder", "too quiet", "your voice is too deep / too high", "too monotone", "more expression", "calmer", "longer pauses", "fewer pauses", "undo that". Each changes one bounded setting (speed, volume, pitch, expressiveness, pause length) instantly, is saved to pod.yaml, and IRIS confirms in the new voice. No model involved.
+
 With a headset add `--headset` (or `audio: {headset: true}` in pod.yaml): IRIS keeps listening while she talks, so you can just talk over her to interrupt. With speakers leave it off, or she'd hear herself.
 
 Other ways in: `iris talk --ui` (full-screen animated iris with live captions, hands-free; keys: Enter/Space interrupt, `t` type, `+ = -` rate, `m` hands-free/push-to-talk, `q` quit; preview it with `iris eye`), `iris talk --vad` (hands-free from the start), `iris chat` (typed, spoken replies),

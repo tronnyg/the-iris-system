@@ -152,3 +152,21 @@ conversation as its prompt (`stt.context`), and a transcript that merely echoes 
 discarded. A reply cut by `llm.num_predict` ends on its last full sentence and offers to go on.
 Feature requests the reflection hears ("stop when I say stop") go to `iris requests` and the
 report, not into `user.md`.
+
+## Tools, wake word, live voice
+
+- `iris/tools/`: each tool = name, description, JSON schema, run(args) -> text. The pipeline
+  asks Ollama whether the model is tool-capable (`/api/show` capabilities). If so, schemas go
+  in the request and structured `tool_calls` come back; otherwise the system prompt teaches a
+  one-line protocol (`<<search: ...>>`) that is intercepted before anything is spoken. At most
+  two tool rounds per turn; a tool's `say_first` line is spoken while it runs. Tool runs are
+  recorded on the turn (`tools`). Today's date is always in the system prompt (stable per day).
+- Wake word (`talk.strip_wake`): Whisper transcribes every utterance; without the wake word
+  (exact anywhere, near-misses like "Irish" only at the start or end) it is dropped and its
+  audio deleted. A reply keeps IRIS awake for `wake.follow_up_s`.
+- `iris/voicefx.py`: a fixed phrase table maps spoken feedback to one bounded knob step
+  (speed, volume_db, pitch_semitones, expressiveness, sentence_gap_ms), applied through
+  `settings.overrides` immediately and saved to pod.yaml with an undo stack. Rendering applies
+  pitch (resample + compensating TTS speed, so duration is kept), gain with a limiter, sentence
+  gaps, and expressiveness (wider per-tone speed table, small per-sentence pace variation,
+  Chatterbox exaggeration/temperature).

@@ -7,6 +7,7 @@ the trace, because the sum of the stages, not any single one, is what you feel.
 
 from __future__ import annotations
 
+import json
 import queue
 import re
 import threading
@@ -18,6 +19,8 @@ from . import selfstore
 from .config import Settings
 from .llm import Cancel, LLMError, LLMStats, Ollama
 from .memory import Delta, Memory, forget_command, remember_command
+from . import tools as tool_mod
+from . import voicefx
 from .textproc.cues import strip as strip_cues
 from .textproc.pronounce import Pronouncer
 from .textproc.sanitizer import Report, Sanitizer, ThinkFilter
@@ -87,8 +90,12 @@ class Conversation:
                  writer: TraceWriter | None = None, memory: Memory | None = None,
                  on_text: Callable[[str], None] | None = None,
                  on_first_audio_queued: Callable[[], None] | None = None,
-                 commit_memory: bool = True):
+                 commit_memory: bool = True, tools: dict | None = None,
+                 on_tool: Callable[[str, dict], None] | None = None):
         self.s = settings
+        self.tools = tools if tools is not None else {}
+        self.on_tool = on_tool or (lambda name, args: None)
+        self._native_tools: bool | None = None
         self.llm = llm
         self.tts = tts
         self.player = player
@@ -99,6 +106,7 @@ class Conversation:
         self.commit_memory = commit_memory
         self.history: list[dict] = []
         self.ctx_start = 0               # first history message still sent to the LLM
+        self.voice_history: list = []    # undo stack for live voice changes
         self.turn_no = 0
         self.live: _Live | None = None
         self.lock = threading.Lock()
@@ -106,6 +114,18 @@ class Conversation:
         self.sanitizer = Sanitizer(tones, events)
         self.pron = Pronouncer(settings.pronunciations,
                                settings.pron_rules.get(getattr(tts, "engine", "") or "", []))
+
+    def tools_native(self) -> bool:
+        """Does the model take tools through the API? (Asked once per conversation.)"""
+        if not self.tools:
+            return False
+        if self._native_tools is None:
+            fn = getattr(self.llm, "supports_tools", None)
+            try:
+                self._native_tools = bool(fn()) if fn else False
+            except Exception:
+                self._native_tools = False
+        return self._native_tools
 
     # -- control from other threads --------------------------------------------------
     def busy(self) -> bool:
@@ -138,6 +158,11 @@ class Conversation:
     # -- commands -----------------------------------------------------------------------
     def handle_command(self, text: str) -> str | None:
         """Feedback and memory commands. Returns a short spoken acknowledgement or None."""
+        changes = voicefx.parse(text)
+        if changes:                     # "too fast", "louder", "too monotone", "undo" ...
+            said = [voicefx.apply(self.s, c, self.voice_history) for c in changes]
+            self.writer.event("voice_feedback", text=text, changes=[c.knob for c in changes], said=said)
+            return " ".join(said)
         parsed = parse_feedback(text)
         if parsed and self.turn_no > 0:
             fb, note = parsed
@@ -182,6 +207,13 @@ class Conversation:
         s = self.s
         history_turns = int(s.knob("llm.history_turns", 12))
         messages = self.memory.build_messages(s.system_prompt, self.context(history_turns), user_text)
+        # today's date (stable all day, so the prompt cache survives); tools for anything newer
+        import datetime as _dt
+        extra = [_dt.date.today().strftime("Today is %A, %d %B %Y.")]
+        native = self.tools_native()
+        if self.tools and not native:
+            extra.append(tool_mod.text_protocol(self.tools))
+        messages[0] = {**messages[0], "content": messages[0]["content"] + "\n\n" + "\n\n".join(extra)}
         options = {
             "temperature": float(s.knob("llm.temperature", 0.7)),
             "num_predict": int(s.knob("llm.num_predict", 220)),
@@ -210,7 +242,7 @@ class Conversation:
                     break
                 idx, text = item
                 try:
-                    res = self.tts.synth(self.pron.apply(text), speed=speed, opts=sopts)
+                    res = voicefx.synth(self.tts, self.pron.apply(text), s, sopts)
                 except Exception as e:
                     log.error("TTS failed: %s", e)
                     tts_info["error"] = str(e)
@@ -247,13 +279,75 @@ class Conversation:
 
         raw = []
         error = None
+        tool_runs: list = []
         try:
-            for delta in self.llm.stream(messages, options=options, cancel=live.cancel, stats=stats):
-                if timing.get("first_token") is None:
-                    timing["first_token"] = time.perf_counter() - t0
-                raw.append(delta)
-                for c in splitter.feed(think.feed(delta)):
+            msgs = list(messages)
+            said_first = False
+            for round_no in range(3):                 # at most two tool rounds, then an answer
+                calls: list = []
+                round_raw: list[str] = []
+                hold = bool(self.tools) and not native and round_no < 2   # text protocol: <<search: ...>>
+                held = ""
+                kw = {}
+                if native and round_no < 2:
+                    kw = {"tools": [t.schema() for t in self.tools.values()], "tool_calls": calls}
+                for delta in self.llm.stream(msgs, options=options, cancel=live.cancel, stats=stats, **kw):
+                    if timing.get("first_token") is None:
+                        timing["first_token"] = time.perf_counter() - t0
+                    raw.append(delta)
+                    round_raw.append(delta)
+                    if hold:
+                        held += delta
+                        st = held.lstrip()
+                        if st.startswith("<<") or (len(st) < 2 and "<<".startswith(st)):
+                            if ">>" in st or len(st) > 400:
+                                break
+                            continue
+                        hold, delta = False, held
+                    for c in splitter.feed(think.feed(delta)):
+                        emit(c)
+                found = []
+                if calls:
+                    for c in calls:
+                        fn = c.get("function") or {}
+                        t = self.tools.get(fn.get("name"))
+                        args = fn.get("arguments") or {}
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except ValueError:
+                                args = {}
+                        if t:
+                            found.append((t, args))
+                elif hold and held.strip():
+                    hit = tool_mod.parse_text_call(held, self.tools)
+                    if hit:
+                        found.append(hit)
+                    else:                              # looked like a tool call but wasn't: say it
+                        for c in splitter.feed(think.feed(held)):
+                            emit(c)
+                if not found or live.cancel.is_set():
+                    break
+                for c in splitter.flush():             # anything said before the tool call
                     emit(c)
+                results = []
+                for t, args in found:
+                    if t.say_first and not said_first:
+                        emit(t.say_first)              # spoken while the tool runs
+                        said_first = True
+                    self.on_tool(t.name, args)
+                    tr = tool_mod.run(t, args)
+                    tool_runs.append(tr)
+                    results.append(tr)
+                    if live.cancel.is_set():
+                        break
+                if native:
+                    msgs.append({"role": "assistant", "content": "".join(round_raw), "tool_calls": calls})
+                    msgs += [{"role": "tool", "content": tr.result, "tool_name": tr.name} for tr in results]
+                else:
+                    msgs.append({"role": "assistant", "content": held.strip()})
+                    msgs.append({"role": "user", "content": "Tool result:\n" + "\n\n".join(tr.result for tr in results)
+                                 + "\n\nNow answer my previous message using this. Don't mention the tool."})
             if not live.cancel.is_set():
                 tail = splitter.feed(think.flush()) + splitter.flush()
                 if stats.done_reason == "length":
@@ -310,6 +404,7 @@ class Conversation:
             "tts": tts_info if voiced else None,
             "timing": {k: (round(v, 3) if isinstance(v, float) else v) for k, v in timing.items()},
             "playback": playback, "barge_in": barge, "cancelled": cancelled, "error": error,
+            "tools": [tr.as_dict() for tr in tool_runs] or None,
             "config": {"self": selfstore.head(), "knobs": s.knobs(),
                        "persona": s.persona_name,
                        "models": {"llm": self.llm.model, "stt": (stt or {}).get("model"), "tts": engine or None}},
@@ -326,7 +421,7 @@ class Conversation:
             from .tts.client import synth_opts
             engine = getattr(self.tts, "engine", "")
             opts = synth_opts(self.s, engine) if engine not in ("tone", "") else {}
-            res = self.tts.synth(text, speed=float(self.s.knob("tts.speed", 1.0)), opts=opts)
+            res = voicefx.synth(self.tts, text, self.s, opts)
             self.player.begin_reply()
             self.player.enqueue(res.audio, 0, res.sr, text=text)
             self.player.end_reply()
