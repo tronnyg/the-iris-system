@@ -358,12 +358,16 @@ def run(night) -> dict:
     if not night.metrics:
         night.s_metrics()
     if night.baseline_results is None and night.llm_ok:
+        log.info("escalation: running the eval suite first, so Claude sees current results "
+                 "(about 10 min with the local judge) ...")
         try:
             night.s_evals()
         except Exception as e:
             log.warning("escalation: evals failed: %s", e)
     dossier = night.out / "claude"
     info = build_dossier(night, dossier, cfg)
+    log.info("escalation: evidence ready (%s turns, %s failing evals) in %s",
+             info["turns"], info["failing_evals"], dossier)
     if info["turns"] < int(cfg["min_new_turns"]) and not info["failing_evals"]:
         return {"skipped": "no new conversations and no failing evals since the last escalation", **info}
 
