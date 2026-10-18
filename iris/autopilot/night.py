@@ -68,13 +68,17 @@ def build_dossier(work: Path) -> dict:
     return info
 
 
+def _changed(work: Path, start: str) -> bool:
+    return workspace.git(work, "rev-parse", "HEAD") != start or bool(workspace.git(work, "status", "--porcelain", check=False))
+
+
 def run_agent(model: str, text: str, work: Path, night: ledger.Night, timebox_s: float, stop: threading.Event,
               argv: list[str] | None = None, use_sandbox: bool = True) -> dict:
     """The worker for up to `timebox_s`, stopped early on budget, errors, STOP, preemption or SIGUSR1."""
     cfg = config.load()
     codex_home = workspace.write_codex_config(model)
     config.log_dir().mkdir(parents=True, exist_ok=True)
-    lastmsg = config.log_dir() / f"lastmsg-{night.date}.txt"
+    lastmsg = codex_home / f"lastmsg-{night.date}.txt"        # inside the sandbox's writable area (the log dir is hidden)
     lastmsg.unlink(missing_ok=True)
     cmd = argv or [cfg["agent"]["command"], "exec", "--skip-git-repo-check", "--json", "-C", str(work),
                    "--sandbox", "danger-full-access", "-m", model, "-o", str(lastmsg), "-"]
@@ -130,6 +134,8 @@ def run_agent(model: str, text: str, work: Path, night: ledger.Night, timebox_s:
                 continue
     log.close()
     summary = lastmsg.read_text() if lastmsg.exists() else ""
+    if summary:
+        (config.log_dir() / f"lastmsg-{night.date}.txt").write_text(summary)
     return {"reason": reason, "exit": proc.returncode, "secs": round(time.time() - t0), "summary": summary.strip(), "model": model}
 
 
@@ -204,6 +210,9 @@ def run(force: bool = False, repo: Path | None = None, use_sandbox: bool = True,
                 if agent["reason"] == "quota" and night.turns < 3 and remaining > 120:
                     night.consecutive_errors, night.last_errors = 0, night.last_errors[-1:]
                     continue                                  # this model has nothing left tonight: the next one
+                if agent["reason"] == "done" and remaining > 600 and not _changed(work, start):
+                    night.last_errors.append(f"{model} finished without changing anything")
+                    continue                                  # it gave up or only wrote a plan: give the next model a go
                 break
             result["agent"] = agent
             ledger.save(night)

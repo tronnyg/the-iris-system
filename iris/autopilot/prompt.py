@@ -8,6 +8,11 @@ text clean-up -> a local voice). You are working in a clone of its repository on
 compare this branch with `main` after about two weeks to see whether an unattended strong model can improve the system.
 Tonight is {date}. You have about {minutes} minutes; stop and write your summary before that.
 
+NOBODY IS WATCHING. This is an unattended run: no person can answer questions, approve a plan or review it before you
+finish. Never ask for permission and never end by proposing what you "would" do: do it, then report what you did. A night that
+only contains a plan counts as a failed night. If a command does not work, try another way; the dossier is already built
+(do not run `iris dossier`), and the command line tool is `.venvs/core/bin/python -m iris.cli` (there is no `iris` launcher).
+
 START HERE
 1. Read `CLAUDE.md`, `docs/README.md` (the documentation rules you must follow), `docs/architecture/00-overview.md`, and
    `docs/variants/autopilot/README.md` if it exists. Read `docs/variants/autopilot/CHANGELOG.md` to see what earlier nights did.

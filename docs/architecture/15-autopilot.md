@@ -100,6 +100,9 @@ the supervisor writes there). `iris autopilot reset TAG` returns the clone and t
 
 ## 6. Budget and stopping
 
+A model that ends a turn without having changed anything (it only wrote a plan) also hands over to the next model while
+more than ten minutes remain.
+
 `ledger.py` counts tokens and provider errors from the worker's JSON events. A night stops its current model when the token
 budget is used or after `budget.stop_after_consecutive_errors` provider errors in a row (rate limits), and the next model of
 `models` takes over. `iris autopilot stop` writes the `STOP` file; `pause` pauses all background jobs; the timer exists only
