@@ -52,11 +52,31 @@
       this.sub = "";
       this.pointer = null;
       new ResizeObserver(() => this.resize()).observe(canvas);
+      // drag spins the sphere (it keeps spinning a little after you let go); wheel zooms
+      this.zoom = 1; this.spinV = 0; this.tiltV = 0; this.drag = null;
       canvas.addEventListener("pointermove", (e) => {
         const r = canvas.getBoundingClientRect();
         this.pointer = { x: (e.clientX - r.left) / r.width - 0.5, y: (e.clientY - r.top) / r.height - 0.5, t: this.t };
+        if (this.drag) {
+          const dx = e.clientX - this.drag.x, dy = e.clientY - this.drag.y;
+          this.drag = { x: e.clientX, y: e.clientY };
+          this.rot += dx * 0.008; this.tiltOff = clamp((this.tiltOff || 0) + dy * 0.006, -0.9, 0.9);
+          this.spinV = dx * 0.25; this.tiltV = dy * 0.15;
+        }
       });
+      canvas.addEventListener("pointerdown", (e) => {
+        this.drag = { x: e.clientX, y: e.clientY };
+        canvas.setPointerCapture(e.pointerId);
+        canvas.style.cursor = "grabbing";
+      });
+      const release = () => { this.drag = null; canvas.style.cursor = ""; };
+      canvas.addEventListener("pointerup", release);
+      canvas.addEventListener("pointercancel", release);
       canvas.addEventListener("pointerleave", () => { this.pointer = null; });
+      canvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        this.zoomT = clamp((this.zoomT || 1) * (e.deltaY > 0 ? 0.92 : 1.08), 0.6, 1.35);
+      }, { passive: false });
       this.build();
       this.resize();
       requestAnimationFrame((ts) => this.loop(ts));
@@ -191,10 +211,15 @@
       }
       this.micS = lerp(this.micS, this.mic, 0.35); this.outS = lerp(this.outS, this.out, 0.45);
       const boost = st === "speaking" ? this.outS * 1.4 : st === "hearing" ? this.micS : 0;
-      this.rot += dt * this.m.rot * (1 + boost);
+      this.rot += dt * this.m.rot * (1 + boost) + (this.drag ? 0 : this.spinV * dt);
+      if (!this.drag) {                                       // inertia after a drag, then settle back
+        this.spinV *= Math.pow(0.15, dt);
+        this.tiltOff = (this.tiltOff || 0) * Math.pow(0.5, dt);
+      }
+      this.zoom = lerp(this.zoom, this.zoomT || 1, Math.min(1, dt * 6));
       this.ring += dt * this.m.ring;
       const look = this.pointer && this.t - this.pointer.t < 3;
-      this.tilt = lerp(this.tilt, look ? 0.38 + this.pointer.y * 0.5 : 0.38 + Math.sin(this.t * 0.21) * 0.08, 0.05);
+      this.tilt = lerp(this.tilt, (look ? 0.38 + this.pointer.y * 0.5 : 0.38 + Math.sin(this.t * 0.21) * 0.08) + (this.tiltOff || 0), 0.08);
       this.yaw = lerp(this.yaw, look ? this.pointer.x * 0.8 : 0, 0.05);
       // signals
       let n = this.m.rate * (1 + boost * 2.5) * dt;
@@ -284,7 +309,7 @@
       const st = this.state, g = this.m.glow, t = this.t;
       const W = this.W, H = this.H, cx = W / 2, cy = H * 0.5;
       // everything (rings, labels, panels) must fit: outer ring at 1.72R plus side labels
-      const R = Math.max(20, Math.min((W / 2 - this.cw * 9) / 1.8, (H / 2 - this.ch * 1.6) / 1.78));
+      const R = Math.max(20, Math.min((W / 2 - this.cw * 9) / 1.8, (H / 2 - this.ch * 1.6) / 1.78)) * (this.zoom || 1);
       const boot = clamp((t - 0.3) / 1.6, 0, 1);              // rings draw themselves on at start
       const P = this.project(R, cx, cy);
       const wired = clamp((t - 0.9) / 1.2, 0, 1);              // synapses connect as the neurons arrive

@@ -88,7 +88,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .btn.ptt.rec { border-color: var(--green); color: var(--bg0h); background: var(--green); }
 
 .core { grid-area: core; align-items: stretch; padding: 0; overflow: hidden; }
-#core { flex: 1; width: 100%; min-height: 0; display: block; cursor: crosshair; }
+#core { flex: 1; width: 100%; min-height: 0; display: block; cursor: grab; touch-action: none; }
 .solo-btn { position: absolute; top: 6px; right: 8px; z-index: 2; background: none; border: 1px solid var(--bg2);
             color: var(--gray); font: inherit; font-size: 13px; padding: 0 6px; cursor: pointer; }
 .solo-btn:hover { color: var(--accent); border-color: var(--accent); }
