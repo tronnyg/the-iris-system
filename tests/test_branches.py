@@ -195,3 +195,11 @@ def test_status_flags_unregistered_variants_and_stale_branches(repo):
     sh(repo, "branch", "fix/done-long-ago")                            # merged (no new commits), not deleted
     s = b.status(repo)
     assert s["unregistered"] == ["ghost"] and "fix/done-long-ago" in s["stale"]
+
+
+def test_the_shipped_registry_and_docs_are_valid():
+    from iris import paths
+    assert isinstance(b.load_registry(paths.REPO), list)
+    for f in ("docs/BRANCHING.md", "AGENTS.md"):
+        assert (paths.REPO / f).exists()
+    assert "docs/BRANCHING.md" in (paths.REPO / "CLAUDE.md").read_text()

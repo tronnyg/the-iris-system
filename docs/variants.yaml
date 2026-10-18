@@ -1,0 +1,17 @@
+# Registry of variants (see docs/BRANCHING.md). A variant is a long-lived branch `variant/<name>`
+# cut from main that is deliberately different from it (an experiment, a trial).
+#
+# Edit this file on an improvement branch like any other change: main is merge-only.
+# Runtime facts (blocked after a failed sync, last sync) are NOT here; they live outside git
+# in ~/.local/share/iris/variants/state.yaml and show in `iris branch status`.
+#
+# variants:
+#   - name: autopilot            # lowercase letters, digits, dashes; the branch is variant/autopilot
+#     mode: auto                 # auto   = tooling merges main into it and fixes conflicts (iris branch sync)
+#                                # manual = you work on it and sync it yourself; tooling never commits to it
+#     purpose: "2-week trial: a cloud model improves IRIS on its own"
+#     owner: autopilot           # who works on it: you | autopilot | <tool>
+#     agent: iris-trial          # the IRIS agent (self store) it runs against, so main's agent is untouched
+#     created: 2026-10-18
+#     retired: false             # true when the experiment is over (the branch is then deleted)
+variants: []
