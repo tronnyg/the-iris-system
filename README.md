@@ -95,6 +95,10 @@ end-of-turn model: a finished sentence gets a reply after ~0.25 s of silence, a 
 pause gets up to 2 s. Both run on the CPU in a few ms per check; set in pod.yaml
 `vad: {engine: silero|energy, smart_turn: true|false, turn_threshold, turn_max_ms}`.
 
+**Faster ears:** `iris set model stt moonshine/base` switches to Moonshine (~100 ms per
+utterance here vs ~400 ms for Whisper base.en); the night loop compares both on your voice.
+Time, date and arithmetic questions are answered instantly without the LLM.
+
 **Models that think out loud** (some Qwen3 builds ignore "thinking off"): IRIS never speaks the
 leaked reasoning; it switches to another installed model (`models.llm_fallback`, or any clean
 one) and the MODELS tab marks the model. Switch and test models live from that tab.
