@@ -71,7 +71,9 @@ While talking:
 
 **Tools:** web search (DuckDuckGo via `ddgs`, no key; or your own SearXNG via `tools.searxng_url`), a calculator and the clock. Models that Ollama marks as tool-capable use them natively; others use a one-line text protocol. IRIS says "Let me look that up." while searching. Turn off per session with `--no-tools`, or choose in pod.yaml `tools: {enabled: [...]}`.
 
-**Tune the voice by talking:** "you're talking too fast", "slower", "louder", "too quiet", "your voice is too deep / too high", "too monotone", "more expression", "calmer", "longer pauses", "fewer pauses", "undo that". Each changes one bounded setting (speed, volume, pitch, expressiveness, pause length) instantly, is saved to pod.yaml, and IRIS confirms in the new voice. No model involved.
+**Tune the voice by talking:** "you're talking too fast", "slower", "louder", "too quiet", "your voice is too deep / too high", "too monotone", "more expression", "calmer", "longer pauses", "fewer pauses", "undo that". Each changes one bounded setting (speed, volume, pitch, expressiveness, pause length) instantly, is saved to pod.yaml, and IRIS confirms in the new voice. No model involved. Contradictory remarks ("sometimes deeper, sometimes higher") change nothing, and "stick with this voice" keeps it as it is. Pitch never drifts by itself.
+
+**Teach a pronunciation:** "the word cumin is pronounced koo-min" (also "say cumin like koo-min", or spell it: "cumin is spelled C U M I N, say it koo-min"; capitals mark the stressed syllable). It is saved in `pods/voice/pronunciations.yaml` (`respell:`), used for Kokoro as phonemes and by other engines as the respelling, spoken back at once so you can check it. "Forget the pronunciation of cumin" resets it.
 
 With a headset add `--headset` (or `audio: {headset: true}` in pod.yaml): IRIS keeps listening while she talks, so you can just talk over her to interrupt. With speakers leave it off, or she'd hear herself.
 

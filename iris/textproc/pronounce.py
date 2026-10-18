@@ -128,9 +128,17 @@ def normalise(text: str) -> str:
 
 
 class Pronouncer:
-    def __init__(self, entries: dict[str, str] | None = None, rules: list[str] | None = None):
+    """Exact replacements (`entries`), plus words you taught by voice (`respell`): Kokoro gets them
+    as phonemes (misaki markup), other engines as the respelling spoken as plain words."""
+
+    def __init__(self, entries: dict[str, str] | None = None, rules: list[str] | None = None,
+                 respell: dict[str, str] | None = None, engine: str = ""):
         self.rules = [r for r in ORDER if r in set(rules or [])]
+        self.engine = engine
+        self.taught: dict[str, str] = {}
+        self.taught_re = None
         self.set(entries or {})
+        self.set_taught(respell or {})
 
     def set(self, entries: dict[str, str]) -> None:
         self.entries = dict(entries)
@@ -140,12 +148,26 @@ class Pronouncer:
         keys = sorted(entries, key=len, reverse=True)
         self.re = re.compile("|".join(rf"(?<![\w]){re.escape(k)}(?![\w])" for k in keys))
 
+    def set_taught(self, respell: dict[str, str]) -> None:
+        self.taught = {k.lower(): v for k, v in respell.items()}
+        keys = sorted(self.taught, key=len, reverse=True)
+        self.taught_re = re.compile("|".join(rf"(?<![\w]){re.escape(k)}(?![\w])" for k in keys), re.I) if keys else None
+
+    def _taught(self, m) -> str:
+        from . import respell as rs
+        spelling = self.taught[m.group(0).lower()]
+        if self.engine == "kokoro":
+            return rs.markup(m.group(0), spelling) or m.group(0)
+        return rs.plain(spelling) or m.group(0)
+
     def apply(self, text: str) -> str:
         text = normalise(text)
         for r in self.rules:
             text = RULES[r](text)
         if self.re:
             text = self.re.sub(lambda m: self.entries.get(m.group(0), m.group(0)), text)
+        if self.taught_re:
+            text = self.taught_re.sub(self._taught, text)
         return text
 
 

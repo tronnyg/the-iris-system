@@ -150,7 +150,8 @@ NOTES = {
     "search": "I did not actually run a search this turn; no tool was called.",
     "list": "I did not actually add anything to a list this turn; no tool was called.",
     "voice": "My voice settings did not change this turn; I can't change how I sound by promising to.",
-    "pronounce": "I did not change how I pronounce anything this turn; no pronunciation was saved.",
+    "pronounce": "I did not change how I pronounce anything this turn; no pronunciation was saved. "
+                 "The user can teach me by saying: the word X is pronounced Y.",
 }
 
 

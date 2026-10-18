@@ -213,8 +213,9 @@ class Conversation:
         self.lock = threading.Lock()
         tones, events = settings.cue_vocab()
         self.sanitizer = Sanitizer(tones, events)
-        self.pron = Pronouncer(settings.pronunciations,
-                               settings.pron_rules.get(getattr(tts, "engine", "") or "", []))
+        engine = getattr(tts, "engine", "") or ""
+        self.pron = Pronouncer(settings.pronunciations, settings.pron_rules.get(engine, []),
+                               respell=settings.respell, engine=engine)
 
     def tools_native(self) -> bool:
         """Does the model take tools through the API? (Asked once per conversation.)"""
@@ -275,6 +276,10 @@ class Conversation:
         if said:                        # "add X to my feature list" (before "remember ...")
             self.writer.event("list", text=text, said=said)
             return said
+        said = self._pronunciation_command(text)
+        if said:
+            self.writer.event("pronunciation", text=text, said=said)
+            return said
         changes = voicefx.parse(text, last=self.last_voice)
         if changes:                     # "too fast", "louder", "too monotone", "undo" ...
             said = [voicefx.apply(self.s, c, self.voice_history) for c in changes]
@@ -300,6 +305,24 @@ class Conversation:
             changes = self.memory.apply(Delta([], [target], [], []))
             self._commit(f"memory: forget '{target}'", changes)
         return None
+
+    def _pronunciation_command(self, text: str) -> str | None:
+        """"The word cumin is pronounced koo-min": saved, applied at once, and spoken back to confirm."""
+        from .textproc import respell
+        forget = respell.parse_forget(text)
+        if forget:
+            if respell.forget(self.s, forget):
+                self.pron.set_taught(self.s.respell)
+                return f"Okay, I'll say {forget} the default way again."
+            return f"I hadn't been taught a different way to say {forget}."
+        teach = respell.parse_teach(text)
+        if not teach:
+            return None
+        word, say = teach
+        if not respell.teach(self.s, word, say):
+            return f"I couldn't work out how \"{say}\" sounds. Write it out in syllables, like koo-min."
+        self.pron.set_taught(self.s.respell)
+        return f"Okay. {word.capitalize()}. Did I get that right?"
 
     def _list_by_model(self, text: str, lst: str) -> str:
         """The user ordered a list add that the phrase matcher couldn't parse: have the model cut out the
@@ -720,7 +743,7 @@ class Conversation:
             from .tts.client import synth_opts
             engine = getattr(self.tts, "engine", "")
             opts = synth_opts(self.s, engine) if engine not in ("tone", "") else {}
-            res = voicefx.synth(self.tts, text, self.s, opts)
+            res = voicefx.synth(self.tts, self.pron.apply(text), self.s, opts)     # acks use taught words too
             self.player.begin_reply()
             self.player.enqueue(res.audio, 0, res.sr, text=text)
             self.player.end_reply()
