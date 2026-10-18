@@ -128,3 +128,13 @@ def test_long_first_sentence_starts_speaking_at_its_first_clause():
     assert chunks == ["It costs 1,250 dollars in total."]
     sp3 = SentenceSplitter(first_clause_chars=0)
     assert sp3.feed("Well, the honest answer to that question is yes, but only if") == []
+
+
+def test_units_symbols_and_addresses_are_spoken_as_words():
+    from iris.textproc.pronounce import Pronouncer, normalise
+    assert normalise("It is 23°C, wind 40 km/h.") == "It is 23 degrees Celsius, wind 40 kilometres per hour."
+    assert normalise("See openai.com/blog") == "See openai dot com"
+    assert normalise("mail jo.smith@example.co.za") == "mail jo dot smith at example dot co dot za"
+    assert normalise("Fruit, e.g. apples & pears, vs. sweets") == "Fruit, for example, apples and pears, versus sweets"
+    assert normalise("version 3.5 is out") == "version 3.5 is out"            # numbers left to the tuned rules
+    assert Pronouncer().apply("512 MB") == "512 megabytes"                      # always on, whatever the engine

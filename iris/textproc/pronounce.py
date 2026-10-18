@@ -99,6 +99,34 @@ RULES = {
 ORDER = ["currency", "percent", "math", "times", "decimals", "thousands", "ordinals"]
 
 
+# -- always on: things no voice reads well, whatever the engine -----------------------------
+_UNITS = [
+    (r"°\s?C\b", " degrees Celsius"), (r"°\s?F\b", " degrees Fahrenheit"), (r"°", " degrees"),
+    (r"\bkm/h\b", " kilometres per hour"), (r"\bmph\b", " miles per hour"), (r"\bm/s\b", " metres per second"),
+    (r"(?<=\d)\s?km\b", " kilometres"), (r"(?<=\d)\s?kg\b", " kilograms"), (r"(?<=\d)\s?cm\b", " centimetres"),
+    (r"(?<=\d)\s?mm\b", " millimetres"), (r"(?<=\d)\s?ml\b", " millilitres"), (r"(?<=\d)\s?GB\b", " gigabytes"),
+    (r"(?<=\d)\s?MB\b", " megabytes"), (r"(?<=\d)\s?TB\b", " terabytes"), (r"(?<=\d)\s?GHz\b", " gigahertz"),
+    (r"(?<=\d)\s?ms\b", " milliseconds"), (r"(?<=\d)\s?kWh\b", " kilowatt hours"), (r"(?<=\d)\s?lbs?\b", " pounds"),
+]
+_SYMBOLS = [
+    (r"\be\.g\.,?", "for example,"), (r"\bi\.e\.,?", "that is,"), (r"\betc\.", "et cetera."),
+    (r"\bvs\.?(?=\s)", "versus"), (r"\bapprox\.", "approximately"), (r"\bw/(?=\s)", "with"),
+    (r"\s&\s", " and "), (r"\s?→\s?", " to "), (r"(?<=\s)~(?=\d)", "about "), (r"\s@\s", " at "),
+]
+_URL_RE = re.compile(r"\b(?:https?://)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|dev|ai|co|gov|edu|app|uk|za|de))"
+                     r"(/[^\s]*)?", re.I)
+_EMAIL_RE = re.compile(r"\b([\w.+-]+)@([\w-]+(?:\.[\w-]+)+)\b")
+
+
+def normalise(text: str) -> str:
+    """Units, symbols, abbreviations, emails and web addresses in the words a voice should say."""
+    text = _EMAIL_RE.sub(lambda m: f"{m.group(1).replace('.', ' dot ')} at {m.group(2).replace('.', ' dot ')}", text)
+    text = _URL_RE.sub(lambda m: m.group(1).replace(".", " dot "), text)
+    for pat, rep in _UNITS + _SYMBOLS:
+        text = re.sub(pat, rep, text)
+    return re.sub(r"  +", " ", text)
+
+
 class Pronouncer:
     def __init__(self, entries: dict[str, str] | None = None, rules: list[str] | None = None):
         self.rules = [r for r in ORDER if r in set(rules or [])]
@@ -113,6 +141,7 @@ class Pronouncer:
         self.re = re.compile("|".join(rf"(?<![\w]){re.escape(k)}(?![\w])" for k in keys))
 
     def apply(self, text: str) -> str:
+        text = normalise(text)
         for r in self.rules:
             text = RULES[r](text)
         if self.re:
