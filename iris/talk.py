@@ -96,6 +96,8 @@ class Session:
         if not self.llm.has_model():
             raise SystemExit(f"Ollama model {self.llm.model} isn't downloaded. Run: ollama pull {self.llm.model}")
         self._preempt_jobs()
+        from .memory import warm_semantic
+        warm_semantic()                        # semantic episode recall, loaded in the background
         opts = llm_options(self.s, self.llm.model)
         threading.Thread(target=self._warm, args=(opts,), daemon=True).start()
         if self.speak:

@@ -18,6 +18,7 @@ voice = [
     "faster-whisper>=1.1",
     "ddgs>=9.0",          # web search tool (DuckDuckGo, no key)
     "useful-moonshine-onnx>=20251121",   # Moonshine STT: ~4x faster than Whisper on short speech
+    "fastembed>=0.5",     # semantic memory recall (bge-small on the CPU, ~5 ms per query)
 ]
 dev = ["pytest>=8"]
 

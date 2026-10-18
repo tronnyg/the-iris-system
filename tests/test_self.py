@@ -108,3 +108,37 @@ def test_agents_are_isolated():
     Memory().apply(Delta(["Only friday knows this"], [], [], []))
     paths.set_agent("iris")
     assert Memory().facts() == []
+
+
+def test_semantic_recall_finds_meaning_not_just_words(monkeypatch):
+    """With an embedder, 'that mountain walk' recalls the hiking episode (no shared words);
+    without one, recall falls back to keywords."""
+    import numpy as np
+    from iris import memory as mem
+    m = mem.Memory()
+    m.add_episode("2026-10-16-a", "2026-10-16: the user planned a hiking trip up Table Mountain.")
+    m.add_episode("2026-10-17-b", "2026-10-17: talked about Hytale patch notes.")
+    topics = {"hik": [1, 0, 0], "mountain": [1, 0, 0], "walk": [1, 0, 0], "hytale": [0, 1, 0], "game": [0, 1, 0]}
+
+    def vec(text):
+        v = np.zeros(3, np.float32) + 0.01
+        for k, x in topics.items():
+            if k in text.lower():
+                v += np.array(x, np.float32)
+        return v
+
+    class FakeEmbedder:
+        def embed(self, docs):
+            return [vec(d) for d in docs]
+
+        def query_embed(self, qs):
+            return iter([vec(q) for q in qs])
+
+    monkeypatch.setitem(mem._emb, "model", FakeEmbedder())
+    monkeypatch.setitem(mem._emb, "vecs", {})
+    got = m.recall("what was that walk again?", k=1)
+    assert got and "hiking" in got[0]
+    assert "Hytale" in m.recall("any news on the game?", k=1)[0]
+    monkeypatch.setitem(mem._emb, "model", None)
+    assert m.recall("what was that walk again?", k=1) == []        # keywords alone can't find it
+    assert "Hytale" in m.recall("Hytale patch", k=1)[0]
