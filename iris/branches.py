@@ -7,6 +7,8 @@
                          `auto` ones are kept current with main by `sync`, `manual` ones are
                          never touched by tooling
 
+`finish` also refuses code changes without a CHANGELOG.md entry (docs/README.md, ADR-0024).
+
 Why code and not just a document: "one branch at a time, always from main" is easy to
 break by accident (by a person or by an AI tool), and a refusal with a reason is cheaper
 than untangling stacked branches afterwards. Standard library + git only.
@@ -147,6 +149,16 @@ def start(repo: Path, name: str) -> str:
     return name
 
 
+CODE_PATHS = ("iris/", "self_template/", "scripts/", "setup.sh", "tonight.sh", "pyproject.toml")
+
+
+def missing_changelog(repo: Path, branch: str) -> bool:
+    """Code changed on `branch` but CHANGELOG.md didn't (docs/README.md: every change is noted)."""
+    changed = out(repo, "diff", "--name-only", f"{MAIN}...{branch}").split()
+    code = [f for f in changed if f.startswith(CODE_PATHS)]
+    return bool(code) and "CHANGELOG.md" not in changed
+
+
 def finish(repo: Path, approved: bool = False) -> str:
     """Merge the current improvement branch into main (--no-ff), push, delete it. Needs `approved`."""
     br = current(repo)
@@ -160,6 +172,9 @@ def finish(repo: Path, approved: bool = False) -> str:
     if behind:
         raise BranchError(f"{br} was not cut from the tip of {MAIN} ({behind} commit(s) behind); "
                           "branches never stack or lag: recreate it from main")
+    if missing_changelog(repo, br):
+        raise BranchError("this branch changes code but not CHANGELOG.md: add a line under ## [Unreleased] "
+                          "(docs/README.md, documentation rules) and commit it")
     git(repo, "checkout", MAIN)
     git(repo, "merge", "--no-ff", br, "-m", f"Merge {br}")
     if has_remote(repo):

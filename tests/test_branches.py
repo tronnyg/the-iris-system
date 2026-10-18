@@ -203,3 +203,22 @@ def test_the_shipped_registry_and_docs_are_valid():
     for f in ("docs/BRANCHING.md", "AGENTS.md"):
         assert (paths.REPO / f).exists()
     assert "docs/BRANCHING.md" in (paths.REPO / "CLAUDE.md").read_text()
+
+
+def test_finish_refuses_code_changes_without_a_changelog_line(repo):
+    (repo / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n")
+    commit(repo, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n", "changelog")
+    sh(repo, "push", "-q", "origin", "main")
+    b.start(repo, "fix/code")
+    (repo / "iris").mkdir()
+    commit(repo, "iris/x.py", "x = 1\n")
+    with pytest.raises(b.BranchError, match="CHANGELOG.md"):
+        b.finish(repo, approved=True)
+    commit(repo, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n- x is 1\n", "changelog line")
+    assert b.finish(repo, approved=True) == "fix/code"
+
+
+def test_docs_only_changes_need_no_changelog_line(repo):
+    b.start(repo, "docs/typo")
+    commit(repo, "notes.md", "fixed a typo\n")
+    assert b.finish(repo, approved=True) == "docs/typo"

@@ -20,7 +20,7 @@ itself. Read `CLAUDE.md` first. Focus (may be empty): $ARGUMENTS
    Pick what fits one focused session (usually 1-4 items). Tell the user the plan in a few
    lines, with the evidence for each item, before large changes.
 
-3. **Build.** On the one open improvement branch (`iris branch status`; if none, `iris branch start fix|feat|docs|chore/<topic>`, which cuts it from `main`; never start a second one or branch from another branch; see `docs/BRANCHING.md`). Merge only when the user approves, then `iris branch finish --yes`. Code, tests, docs together. Settings
+3. **Build.** On the one open improvement branch (`iris branch status`; if none, `iris branch start fix|feat|docs|chore/<topic>`, which cuts it from `main`; never start a second one or branch from another branch; see `docs/BRANCHING.md`). Merge only when the user approves, then `iris branch finish --yes`. Code, tests, docs together (`docs/README.md` rules: `CHANGELOG.md` line, the architecture page you touched, an ADR for decisions or measured rejections). Settings
    changes go through the CLI (`iris set ...`, `iris ollama set|profile ...`) so they are
    committed to the self store and reversible. Keep the runtime local-only. Prefer measuring
    before and after: `iris ollama bench`, `iris evals`, `iris metrics`.
