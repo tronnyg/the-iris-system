@@ -136,7 +136,8 @@ def set_value(section: str, name: str, value: Any, root: Path | None = None) -> 
     spec = (data.get(section) or {}).get(name)
     if spec is None:
         raise KeyError(f"{section}.{name} not in pod.yaml")
-    if "choices" in spec and value not in spec["choices"]:
+    if "choices" in spec and value not in spec["choices"] and section != "models":
+        # knob choices are hard limits; model choices only list what the night loop compares
         raise ValueError(f"{name}={value!r} not in choices {spec['choices']}")
     if "min" in spec and value < spec["min"]:
         raise ValueError(f"{name}={value} below min {spec['min']}")

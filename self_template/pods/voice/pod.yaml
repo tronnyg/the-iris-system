@@ -14,7 +14,7 @@ resources:
 
 models:
   llm: {value: "qwen3:4b", tier: approve}
-  stt: {value: "base.en", choices: [tiny.en, base.en, small.en, distil-small.en], tier: auto}
+  stt: {value: "base.en", choices: [tiny.en, base.en, small.en, distil-small.en, moonshine/tiny, moonshine/base], tier: auto}
   tts_engine: {value: kokoro, choices: [kokoro, chatterbox], tier: approve}
 
 knobs:

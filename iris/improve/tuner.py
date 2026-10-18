@@ -182,7 +182,7 @@ def judge_experiments(settings: Settings, extra_metrics: dict | None = None) -> 
 
 
 def choose_stt(stt_eval: dict, settings: Settings) -> dict | None:
-    """Pick the smallest installed Whisper that is about as accurate as the best one."""
+    """Pick the fastest installed recogniser that is about as accurate as the best one."""
     spec = settings.model_spec("stt")
     if spec.get("tier") != "auto" or not stt_eval:
         return None
@@ -194,7 +194,8 @@ def choose_stt(stt_eval: dict, settings: Settings) -> dict | None:
     ok = [c for c in choices if stt_eval[c]["wer"] <= best + 0.02 and (stt_eval[c].get("secs_p50") or 9) <= budget]
     if not ok:
         return None
-    pick = ok[0]                                    # choices are ordered small -> large
+    # as accurate as the best: take the fastest (Whisper sizes and Moonshine compete equally)
+    pick = min(ok, key=lambda c: (stt_eval[c].get("secs_p50") or 9, choices.index(c)))
     cur = settings.model("stt")
     if pick == cur:
         return None

@@ -62,9 +62,19 @@ class STT:
         self.compute_type = compute_type
         self.threads = threads or max(1, (os.cpu_count() or 4) // 2)
 
+    @property
+    def moonshine(self) -> bool:
+        return self.name.startswith("moonshine/")
+
     def _model(self):
         key = (self.name, self.device)
         with STT._lock:
+            if key not in STT._models and self.moonshine:
+                # Moonshine (ONNX, CPU): encodes only the audio actually spoken, so a short
+                # command takes ~100 ms instead of Whisper's fixed 30 s window (~400 ms here)
+                import moonshine_onnx
+                STT._models[key] = (moonshine_onnx.MoonshineOnnxModel(model_name=self.name),
+                                    moonshine_onnx.load_tokenizer())
             if key not in STT._models:
                 from faster_whisper import WhisperModel  # heavy import, only when needed
                 STT._models[key] = WhisperModel(self.name, device=self.device,
@@ -84,6 +94,12 @@ class STT:
         t0 = time.perf_counter()
         if trim:
             audio = trim_silence(audio)
+        if self.moonshine:
+            model, tok = self._model()
+            text = tok.decode_batch(model.generate(audio[None, :]))[0].strip() if len(audio) >= 1600 else ""
+            tr = Transcript(text=text, model=self.name, secs=time.perf_counter() - t0, audio_s=len(audio) / SAMPLE_RATE)
+            tr.hallucination = text.lower().strip() in HALLUCINATIONS
+            return tr
         segments, _info = self._model().transcribe(
             audio, language="en", beam_size=beam_size, vad_filter=False,
             condition_on_previous_text=False, without_timestamps=True,
