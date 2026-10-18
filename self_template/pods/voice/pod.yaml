@@ -14,7 +14,7 @@ resources:
 
 models:
   llm: {value: "qwen3:4b", tier: approve}
-  stt: {value: "base.en", choices: [tiny.en, base.en, small.en, distil-small.en, moonshine/tiny, moonshine/base], tier: auto}
+  stt: {value: "base.en", choices: [tiny.en, base.en, small.en, distil-small.en, moonshine/tiny, moonshine/base, small.en@gpu, large-v3-turbo@gpu], tier: auto}
   tts_engine: {value: kokoro, choices: [kokoro, chatterbox], tier: approve}
 
 knobs:
@@ -62,6 +62,9 @@ wake:
   enabled: true          # true (or `iris talk --wake`): only respond after the wake word
   words: [iris]
   follow_up_s: 12         # stay awake this long after each reply, so follow-ups need no wake word
+
+stt:
+  confirm_logprob: -0.9   # a Whisper transcript this unsure is read back ("Did you say ...?") before answering; null = off
 
 tools:
   enabled: [web_search, calculator, current_time, add_to_list, show_list, wikipedia, exchange_rate, weather]

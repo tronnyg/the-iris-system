@@ -452,3 +452,177 @@ def test_one_dropped_connection_is_retried(monkeypatch):
     monkeypatch.delenv("IRIS_OFFLINE", raising=False)
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     assert lookup._get_json("https://example.invalid/x") == {"ok": 1} and len(attempts) == 2
+
+
+# -- B5: GPU memory pre-flight (Chatterbox + LLM + Kokoro crashed Ollama) ----------------------------------
+from iris import vram  # noqa: E402
+
+
+class _LLM:
+    model = "gemma4:e4b-it-qat"
+    url = "http://127.0.0.1:9"
+
+    def __init__(self, resident_mb=None):
+        self.resident_mb = resident_mb
+
+    def running(self):
+        return [{"name": self.model, "size_vram": self.resident_mb * 2**20}] if self.resident_mb else []
+
+
+def test_engine_that_fits_is_left_alone():
+    v = vram.check("chatterbox", None, _LLM(5200), mem=(6000, 8192))
+    assert v.engine == "chatterbox" and not v.changed
+
+
+def test_chatterbox_next_to_a_resident_llm_falls_back_to_kokoro():
+    v = vram.check("chatterbox", None, _LLM(5200), mem=(2600, 8192))      # LLM already loaded: only the voice needs room
+    assert (v.engine, v.device) == ("kokoro", None)
+    assert "chatterbox needs about" in v.reason and "using the Kokoro voice" in v.reason
+
+
+def test_an_llm_that_is_not_loaded_yet_is_counted_too(monkeypatch):
+    class Cold(_LLM):
+        pass
+    monkeypatch.setattr(vram, "llm_need_mb", lambda llm: (5200, False))
+    # 5.2 GB (LLM, still to load) + 0.8 GB (Kokoro) + headroom does not fit in 5.5 GB free
+    v = vram.check("kokoro", None, Cold(), mem=(5500, 8192))
+    assert v.engine == "kokoro" and v.device == "cpu" and "CPU" in v.reason
+    assert not vram.check("kokoro", None, Cold(), mem=(7000, 8192)).changed
+
+
+def test_no_gpu_or_tone_engine_is_never_blocked(monkeypatch):
+    monkeypatch.setattr(vram, "gpu_memory", lambda: None)
+    assert not vram.check("chatterbox", None, _LLM(5200)).changed          # can't tell: don't block
+    assert not vram.check("tone", None, _LLM(5200), mem=(100, 8192)).changed
+
+
+def test_measured_sizes_are_learned_and_used(iris_home):
+    assert vram.engine_need_mb("chatterbox") == vram.DEFAULT_MB["chatterbox"]
+    vram.learn("chatterbox", 2900)
+    assert vram.engine_need_mb("chatterbox") == 2900 + vram.CONTEXT_MB
+    s = Settings.load()
+    s.pod.setdefault("tts", {})["chatterbox"] = {"vram_mb": 4100}
+    assert vram.engine_need_mb("chatterbox", s) == 4100                       # pod.yaml can override
+
+
+def test_session_falls_back_and_says_why(monkeypatch):
+    from iris.talk import Session
+    monkeypatch.setattr(vram, "gpu_memory", lambda: (2000, 8192))
+    monkeypatch.setattr(vram, "llm_need_mb", lambda llm: (5200, True))
+    s = Session(mode="ptt", engine="chatterbox", speak=True, listen=False, no_audio_device=True)
+    monkeypatch.setattr("iris.talk.make_tts", lambda e: (_ for _ in ()).throw(RuntimeError("stop after the decision " + e)))
+    monkeypatch.setattr(s.llm, "available", lambda: True)
+    monkeypatch.setattr(s.llm, "has_model", lambda: True)
+    monkeypatch.setattr(s, "_preempt_jobs", lambda: None)
+    monkeypatch.setattr(s, "_warm", lambda opts: None)
+    with pytest.raises(RuntimeError, match="stop after the decision kokoro"):
+        s.boot()
+    assert s.engine == "kokoro" and s.vram_notice.startswith("Chatterbox needs about")
+
+
+# -- B4: hearing (session 174811: "Okay, level higher" heard as "Okay, no, but hi") --------------------------------
+from iris import garble  # noqa: E402
+from iris.stt import STT  # noqa: E402
+
+
+def test_gpu_recogniser_names():
+    g = STT("large-v3-turbo@gpu")
+    assert (g.model_id, g.device, g.on_gpu, g.moonshine) == ("large-v3-turbo", "cuda", True, False)
+    c = STT("small.en")
+    assert (c.model_id, c.device, c.on_gpu) == ("small.en", "cpu", False)
+
+
+def test_missing_cuda_libs_mean_no_gpu_recogniser_not_a_crash(monkeypatch, tmp_path):
+    from iris import paths, stt
+    monkeypatch.setattr(paths, "REPO", tmp_path)
+    monkeypatch.setattr(stt, "_CUDA_LOADED", [])
+    assert stt.preload_cuda_libs() is False
+    with pytest.raises(RuntimeError, match="no CUDA 12"):
+        STT("small.en@gpu", local_only=True)._model()
+
+
+def test_gpu_recogniser_and_voice_share_the_card():
+    llm = _LLM(3000)                                              # gemma4 e4b: ~3 GB resident
+    v, stt_name, why = vram.plan("kokoro", "large-v3-turbo@gpu", None, llm, mem=(5000, 8192))
+    assert (v.engine, stt_name, why) == ("kokoro", "large-v3-turbo@gpu", "")          # 0.8 + 1.5 + headroom fits
+    v, stt_name, why = vram.plan("chatterbox", "large-v3-turbo@gpu", None, llm, mem=(5000, 8192))
+    assert (v.engine, stt_name) == ("kokoro", "large-v3-turbo@gpu")                   # the voice gives way first
+    v, stt_name, why = vram.plan("kokoro", "large-v3-turbo@gpu", None, llm, mem=(2400, 8192))
+    assert stt_name == "moonshine/base" and "listening on the CPU" in why             # then the recogniser, to the CPU
+    assert vram.plan("kokoro", "moonshine/base", None, llm, mem=(2400, 8192))[1] == "moonshine/base"   # CPU ones cost nothing
+
+
+def test_new_model_choices_reach_an_existing_agent(iris_home):
+    from iris.config import sync_choices
+    s = Settings.load()
+    p = s.root / "pods/voice/pod.yaml"
+    p.write_text(p.read_text().replace(", small.en@gpu, large-v3-turbo@gpu", ""))
+    assert "small.en@gpu" not in Settings.load().model_spec("stt")["choices"]
+    assert sync_choices(s.root) == ["stt:small.en@gpu", "stt:large-v3-turbo@gpu"]
+    assert Settings.load().model_spec("stt")["choices"][-2:] == ["small.en@gpu", "large-v3-turbo@gpu"]
+    assert Settings.load().model("stt") == s.model("stt")                             # the chosen model is untouched
+    assert sync_choices(s.root) == []
+
+
+LOW, OK_ = {"avg_logprob": -1.3}, {"avg_logprob": -0.3}
+
+
+@pytest.mark.parametrize("text, stt, thr, prev, expect", [
+    ("Okay, no, but hi", LOW, -0.9, "", True),
+    ("Okay, no, but hi", OK_, -0.9, "", False),                       # Whisper was confident
+    ("Okay, no, but hi", {"avg_logprob": -0.95}, None, "", False),    # switched off
+    ("Okay, no, but hi", {}, -0.9, "", False),                        # Moonshine: no confidence to go on
+    ("Okay, no, but hi", {"avg_logprob": -1.3, "hallucination": True}, -0.9, "", False),
+    ("yeah", LOW, -0.9, "", False),
+    ("two plus two", LOW, -0.9, "Want me to calculate something?", False),              # short answer to a question
+    ("blah " * 12, LOW, -0.9, "", False),                             # long speech is understood from context
+    ("", LOW, -0.9, "", False),
+])
+def test_when_to_ask_did_you_say(text, stt, thr, prev, expect):
+    assert garble.suspect(text, stt, thr, prev) is expect
+
+
+def turn(c, text, lp=-1.3):
+    return c.respond(text, stt={"avg_logprob": lp}, speak=False)
+
+
+def test_unsure_transcript_is_read_back_then_confirmed():
+    c = conv("Sure, a bit higher.")
+    r = turn(c, "Okay, no, but hi")
+    assert r.spoken == "I'm not sure I heard that right. Did you say: Okay, no, but hi?" and c.llm.calls == []
+    r = c.respond("Yes", stt={"avg_logprob": -0.2}, speak=False)
+    assert c.llm.calls and "Okay, no, but hi" in c.llm.calls[-1]["messages"][-1]["content"]       # the heard text is answered
+
+
+def test_denying_it_asks_to_repeat_and_nothing_is_answered():
+    c = conv("never")
+    turn(c, "Okay, no, but hi")
+    assert c.respond("No, that's wrong", speak=False).spoken == "Sorry about that. Say it again?" and c.llm.calls == []
+
+
+def test_a_new_request_replaces_the_question():
+    c = conv("Fine.")
+    turn(c, "Okay, no, but hi")
+    c.respond("Tell me a joke", stt={"avg_logprob": -0.2}, speak=False)
+    assert "Tell me a joke" in c.llm.calls[-1]["messages"][-1]["content"]
+    assert c.pending_heard is None
+
+
+def test_it_never_asks_twice_in_a_row():
+    c = conv("Okay.")
+    assert turn(c, "Okay, no, but hi").spoken.startswith("I'm not sure")
+    r = turn(c, "Tell me about volcanoes")                                # still unsure, but asked once already
+    assert not r.spoken.startswith("I'm not sure") and c.llm.calls
+    assert turn(c, "something odd again").spoken.startswith("I'm not sure")   # asks again after a normal turn
+
+
+def test_llm_size_comes_from_what_was_measured_not_the_file_size(monkeypatch):
+    from iris.util import write_jsonl
+    from iris import paths
+    write_jsonl(paths.state_dir() / "bench.jsonl", [{"model": "gemma4:e4b-it-qat", "vram_mb": 2969, "kind": "llm"}])
+    cold = _LLM(None)
+    assert vram.llm_need_mb(cold) == (3169, False)
+    assert not vram.check("kokoro", None, cold, mem=(7229, 8192), reserve_mb=1500).changed       # fits with room to spare
+    resident = _LLM(3100)
+    assert vram.llm_need_mb(resident) == (3100, True)
+    assert vram.llm_need_mb(cold) == (3300, False)                                              # now remembered from the real load

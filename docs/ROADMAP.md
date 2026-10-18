@@ -115,6 +115,18 @@ ratings, so lessons that don't help get pruned.
 
 ## Done
 
+- 2026-10-18 (fix/recognition-and-vram, from session 174811-38a0):
+  - **GPU recognisers** (`name@gpu`): measured on 202 real clips vs a large-Whisper beam-5 reference: live Moonshine
+    24% WER, base.en 23%, small.en 18% (0.17 s on GPU), large-v3-turbo 5% (0.59 s p50 / 0.83 s p90, ~1.1 GB). Turbo
+    misses the 0.4 s target I set but fixes the mishearings; small.en@gpu meets it. Not made the default: your call
+    (`iris set model stt ...@gpu`); the night tuner can also pick one (budget 0.6 s). Needed CUDA 12 cuBLAS/cuDNN,
+    borrowed from the Kokoro venv via ctypes (`stt.preload_cuda_libs`), no download.
+  - **Garble guard** (`iris/garble.py`): a Whisper transcript with avg log-probability < -0.9 is read back
+    ("Did you say ...?"); measured 82-100% precision at ~5% of turns. Moonshine has no confidence, so it cannot ask.
+    Mining the live-vs-teacher diffs found no recurring word pairs beyond the ones `asr_fix` already has.
+  - **GPU memory pre-flight** (`iris/vram.py`): voice engine + recogniser + LLM must fit before anything loads; the
+    voice falls back to Kokoro, then the recogniser to the CPU; sizes are learned; `iris doctor`, `iris say` and the
+    night loop use it.
 - 2026-10-18 (feat/lookup-tools, from session 174811-38a0):
   - **Exact lookups** (`iris/lookups.py`, `iris/tools/lookup.py`): Wikipedia lead paragraph read verbatim,
     exchange rates (also from garbled "You what the current exchange it is from rands to dollars"), weather and

@@ -198,6 +198,38 @@ def sync_knobs(root: Path | None = None, template: Path | None = None) -> list[s
     return names
 
 
+def sync_choices(root: Path | None = None, template: Path | None = None) -> list[str]:
+    """Add model choices (e.g. a GPU recogniser) that the template lists and this agent's pod.yaml lacks.
+
+    Same reason as sync_knobs: the self store only copies whole files, so a new choice would never reach an
+    existing agent. Only appends to the `choices: [...]` of models the agent already has; the chosen
+    value is never touched."""
+    root = root or paths.self_dir()
+    template = template or (paths.REPO / "self_template" / "pods" / "voice" / "pod.yaml")
+    p = root / "pods/voice/pod.yaml"
+    try:
+        tt, text = template.read_text(), p.read_text()
+    except FileNotFoundError:
+        return []
+    want = (yaml.safe_load(tt) or {}).get("models") or {}
+    have = (yaml.safe_load(text) or {}).get("models") or {}
+    added: list[str] = []
+    for name, spec in want.items():
+        if name not in have or not isinstance(have[name], dict):
+            continue
+        missing = [c for c in (spec.get("choices") or []) if c not in (have[name].get("choices") or [])]
+        if not missing:
+            continue
+        pat = re.compile(rf"^(\s+{re.escape(name)}\s*:\s*\{{[^\n]*?choices:\s*\[)([^\]]*)(\])", re.M)
+        new, n = pat.subn(lambda m: m.group(1) + m.group(2).rstrip() + ", " + ", ".join(missing) + m.group(3), text, count=1)
+        if n:
+            text = new
+            added += [f"{name}:{c}" for c in missing]
+    if added:
+        p.write_text(text)
+    return added
+
+
 def _render(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"

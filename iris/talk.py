@@ -65,9 +65,10 @@ class Session:
         self.s = Settings.load()
         from . import voicefx
         try:
-            from .config import sync_knobs
+            from .config import sync_choices, sync_knobs
             changed = voicefx.ensure_knobs(self.s.root)         # e.g. expressiveness range 0..1 -> 0..2
             added = sync_knobs(self.s.root)                     # knobs added to the template since this agent began
+            added += sync_choices(self.s.root)                  # model choices added since (e.g. GPU recognisers)
             if changed or added:
                 selfstore.commit("knobs: widened bounds / added from template" + (": " + ", ".join(added) if added else ""),
                                  files=["pods/voice/pod.yaml"], auto=False)
@@ -79,6 +80,8 @@ class Session:
         self.speak = speak
         self.listen = listen
         self.engine = engine or self.s.model("tts_engine", "kokoro")
+        self.vram_notice = ""                 # set at boot when the GPU can't take the chosen voice engine
+        self.tts_device: str | None = None
         self.writer = TraceWriter()
         self.memory = Memory()
         self.llm = Ollama(self.s.model("llm", "qwen3:4b"))
@@ -108,6 +111,25 @@ class Session:
         if not self.llm.has_model():
             raise SystemExit(f"Ollama model {self.llm.model} isn't downloaded. Run: ollama pull {self.llm.model}")
         self._preempt_jobs()
+        self.vram_notice = ""
+        self.tts_device: str | None = None
+        self.stt_name = self.s.model("stt", "base.en")
+        if self.speak or self.listen:
+            from . import vram
+            # before anything is loaded: a voice or recogniser that doesn't fit would crash Ollama
+            v, self.stt_name, stt_why = vram.plan(self.engine if self.speak else "tone", self.stt_name if self.listen else "",
+                                                  self.s, self.llm)
+            notes = []
+            if self.speak and v.changed:
+                log.warning("voice engine %s -> %s: %s", self.engine, v.engine, v.reason)
+                print(f"  voice: {v.reason}", flush=True)
+                self.engine, self.tts_device = v.engine, v.device
+                notes.append(v.reason[0].upper() + v.reason[1:])
+            if stt_why:
+                log.warning("speech recogniser -> %s: %s", self.stt_name, stt_why)
+                print(f"  ears: {stt_why}", flush=True)
+                notes.append(stt_why[0].upper() + stt_why[1:])
+            self.vram_notice = " ".join(notes)
         from .memory import warm_semantic
         warm_semantic()                        # semantic episode recall, loaded in the background
         opts = llm_options(self.s, self.llm.model)
@@ -116,21 +138,30 @@ class Session:
             self.tts = make_tts(self.engine)
             t0 = time.perf_counter()
             tones, events = self.s.cue_vocab()
-            info = self.tts.load(engine_load_options(self.s, self.engine),
-                                 opts=synth_opts(self.s, self.engine) if self.engine != "tone" else {})
+            load_opts = engine_load_options(self.s, self.engine)
+            if self.tts_device:
+                load_opts["device"] = self.tts_device
+            info = self.tts.load(load_opts, opts=synth_opts(self.s, self.engine) if self.engine != "tone" else {})
+            from . import vram as _vram
+            _vram.learn(self.engine, info.get("vram_mb"))
             print(f"  voice: {self.engine} ready in {time.perf_counter() - t0:.1f}s {info.get('device', '')}", flush=True)
             self.player = FakeClockPlayer(sr=self.tts.sr) if self.no_audio_device else Player(sr=self.tts.sr)
             self.player.start()
         if self.listen:
-            self.stt = STT(self.s.model("stt", "base.en"))
+            self.stt = STT(self.stt_name)
             try:
                 secs = self.stt.load()
-            except Exception as e:                       # e.g. Moonshine not installed or not downloaded
-                log.warning("speech recogniser %s failed to load (%s); using base.en", self.stt.name, e)
-                self.stt = STT("base.en")
-                secs = self.stt.load()
+            except Exception as e:                       # e.g. no GPU libs, Moonshine not installed or not downloaded
+                fallback = "moonshine/base" if self.stt.on_gpu else "base.en"
+                log.warning("speech recogniser %s failed to load (%s); using %s", self.stt.name, e, fallback)
+                try:
+                    self.stt = STT(fallback)
+                    secs = self.stt.load()
+                except Exception:
+                    self.stt = STT("base.en")
+                    secs = self.stt.load()
             kind = "moonshine" if self.stt.moonshine else "whisper"
-            print(f"  ears: {kind} {self.stt.name} loaded in {secs:.1f}s (CPU)", flush=True)
+            print(f"  ears: {kind} {self.stt.name} loaded in {secs:.1f}s ({'GPU' if self.stt.on_gpu else 'CPU'})", flush=True)
             vad = vad_config(self.s)
             device = mic_device(self.mic, self.s)
             if self.headset is None:
@@ -680,6 +711,8 @@ class Session:
                 greeting = self.s.persona.get("greeting")
                 if greeting and self.speak:
                     self.conv._say_simple(greeting, True)
+                if self.vram_notice and self.speak:
+                    self.conv._say_simple(self.vram_notice, True)
                 while self.running:
                     time.sleep(0.2)
                 self.drain(10)
@@ -702,6 +735,8 @@ class Session:
             greeting = self.s.persona.get("greeting")
             if greeting and self.speak:
                 self.conv._say_simple(greeting, True)
+            if self.vram_notice and self.speak:
+                self.conv._say_simple(self.vram_notice, True)
             try:
                 while self.running:
                     line = sys.stdin.readline()

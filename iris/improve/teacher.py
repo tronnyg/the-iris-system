@@ -56,6 +56,12 @@ def grade_stt(turns: list[dict], teacher_model: str, candidates: list[str], max_
     logged = {t["audio_in"]: t.get("user_text") or "" for t in items}
     result = {"items": len(items), "teacher": teacher_model, "stt_wer": score(logged), "by_model": {}}
     for m in candidates:
+        if m.endswith("@gpu"):
+            from .. import vram
+            mem = vram.gpu_memory()
+            if mem is None or mem[0] < vram.stt_need_mb(m) + vram.HEADROOM_MB:
+                result["by_model"][m] = {"installed": False, "reason": "not enough free GPU memory"}
+                continue                                  # loading it could push Ollama out of memory
         stt = STT(m, local_only=True)
         try:
             stt.load()

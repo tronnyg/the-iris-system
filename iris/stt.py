@@ -50,7 +50,36 @@ class Transcript:
         return dict(self.__dict__)
 
 
+_CUDA_LOADED: list = []
+
+
+def preload_cuda_libs() -> bool:
+    """Make CTranslate2 find CUDA 12's cuBLAS/cuDNN without installing a second copy (~1 GB).
+
+    faster-whisper's GPU build wants libcublas.so.12 and libcudnn.so.9, which this system (CUDA 13) doesn't
+    have on the library path, but IRIS's other environments (torch builds for Kokoro/Chatterbox) already
+    ship them. Loading those files first, by path, is enough. False if no copy is found."""
+    if _CUDA_LOADED:
+        return True
+    import ctypes
+    import glob
+    from . import paths
+    for env in ("kokoro", "chatterbox"):
+        base = paths.REPO / ".venvs" / env / "lib"
+        for root in glob.glob(str(base / "python3*" / "site-packages" / "nvidia")):
+            want = [("cublas/lib", "libcublasLt.so.12"), ("cublas/lib", "libcublas.so.12"), ("cudnn/lib", "libcudnn.so.9")]
+            try:
+                for sub, so in want:
+                    _CUDA_LOADED.append(ctypes.CDLL(os.path.join(root, sub, so), mode=ctypes.RTLD_GLOBAL))
+                return True
+            except OSError:
+                _CUDA_LOADED.clear()
+    return False
+
+
 class STT:
+    """`name` may end in "@gpu" (e.g. "large-v3-turbo@gpu"): the same Whisper on the GPU, int8."""
+
     _models: dict[tuple[str, str], object] = {}
     _fallbacks: dict = {}
     _lock = threading.Lock()
@@ -58,8 +87,9 @@ class STT:
     def __init__(self, model: str = "base.en", device: str = "cpu", compute_type: str = "int8",
                  threads: int | None = None, local_only: bool = False):
         self.name = model
+        self.model_id = model.removesuffix("@gpu")
         self.local_only = local_only
-        self.device = device
+        self.device = "cuda" if model.endswith("@gpu") else device
         self.compute_type = compute_type
         self.threads = threads or max(1, (os.cpu_count() or 4) // 2)
 
@@ -68,6 +98,10 @@ class STT:
     @property
     def moonshine(self) -> bool:
         return self.name.startswith("moonshine/")
+
+    @property
+    def on_gpu(self) -> bool:
+        return self.device == "cuda"
 
     def _whisper(self) -> "STT":
         key = ("long", self.local_only)
@@ -85,8 +119,10 @@ class STT:
                 STT._models[key] = (moonshine_onnx.MoonshineOnnxModel(model_name=self.name),
                                     moonshine_onnx.load_tokenizer())
             if key not in STT._models:
+                if self.device == "cuda" and not preload_cuda_libs():
+                    raise RuntimeError("no CUDA 12 cuBLAS/cuDNN found for the GPU recogniser (see stt.preload_cuda_libs)")
                 from faster_whisper import WhisperModel  # heavy import, only when needed
-                STT._models[key] = WhisperModel(self.name, device=self.device,
+                STT._models[key] = WhisperModel(self.model_id, device=self.device,
                                                 compute_type=self.compute_type,
                                                 cpu_threads=self.threads,
                                                 local_files_only=self.local_only)

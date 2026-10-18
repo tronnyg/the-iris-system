@@ -58,6 +58,7 @@ the data IRIS collected:
 | `iris/textproc/respell.py` | pronunciations taught by voice (respelling -> phonemes, saved in pronunciations.yaml) |
 | `iris/voicefx.py` | live voice commands (long dictated requests, magnitudes) and rendering (chunk trimming, gaps, per-sentence variety) |
 | `iris/improve/night.py` | night/idle stages; `bench.py`, `insights.py` (findings + dossier), `sleep.py` (reflection) |
+| `iris/vram.py`, `iris/garble.py` | GPU memory pre-flight (voice + recogniser + LLM); "did you say ...?" for unsure Whisper transcripts |
 | `iris/jobs.py` | background job control and systemd timers |
 | `iris/branches.py` | branch workflow (one improvement branch from main; variants kept current with main) |
 | `iris/lists.py` | user lists and the voice phrases for them (only what the user asks for) |
