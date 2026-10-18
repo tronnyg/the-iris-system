@@ -28,7 +28,7 @@ def test_text_protocol_tool_call_is_intercepted_and_answered():
         assert "<<calc: EXPRESSION>>" in msgs[0]["content"]        # model was told how
         return "<<calc: 17*6>>"
     c = conv(FakeLLM(reply))
-    r = c.respond("what is seventeen times six", speak=False)
+    r = c.respond("I bought seventeen boxes of six eggs, how many eggs is that", speak=False)
     assert r.spoken == "That comes to one hundred and two."         # the tool line is never spoken
     assert r.record["tools"][0]["name"] == "calculator" and r.record["tools"][0]["ok"]
 
