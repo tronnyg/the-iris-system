@@ -123,7 +123,10 @@ class EnergyVAD:
                     self.turn_prob = self.turn.complete_prob(np.concatenate(self.buf))
                 except Exception:
                     self.turn_prob = None
-                if self.turn_prob is not None and self.turn_prob >= self.cfg.turn_threshold:
+                # more silence makes the model lean towards "finished": after a first "not yet",
+                # only a confident verdict ends the turn early
+                need = self.cfg.turn_threshold if self.next_check_ms == 0 else max(self.cfg.turn_threshold, 0.8)
+                if self.turn_prob is not None and self.turn_prob >= need:
                     reason = "smart_turn"
                 self.next_check_ms = silent_ms + 400
             if reason is None and silent_ms >= self.cfg.turn_max_ms:
