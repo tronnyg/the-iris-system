@@ -109,3 +109,22 @@ def test_tts_texts_are_grouped_and_interleaved():
     assert len(seq) == len(set(seq))
     assert all(any(c.isdigit() for c in x) for x in teacher.number_sentences(s))
     assert teacher.test_sentences(s, rotate=1)[0] != seq[0]
+
+
+def test_long_first_sentence_starts_speaking_at_its_first_clause():
+    from iris.textproc.splitter import SentenceSplitter
+    sp = SentenceSplitter(min_chunk_chars=60, first_clause_chars=30)
+    text = ("Well, the honest answer to that question is yes, but only if the weather holds up tomorrow. "
+            "Bring a coat anyway.")
+    out = []
+    for i in range(0, len(text), 3):
+        out += sp.feed(text[i:i + 3])
+    out += sp.flush()
+    assert out[0] == "Well, the honest answer to that question is yes,"      # short "Well," isn't enough
+    assert "".join(out).replace(" ", "") == text.replace(" ", "")
+    # numbers with commas and short sentences are left alone
+    sp2 = SentenceSplitter(first_clause_chars=30)
+    chunks = sp2.feed("It costs 1,250 dollars in total. ") + sp2.flush()
+    assert chunks == ["It costs 1,250 dollars in total."]
+    sp3 = SentenceSplitter(first_clause_chars=0)
+    assert sp3.feed("Well, the honest answer to that question is yes, but only if") == []

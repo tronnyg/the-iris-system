@@ -310,7 +310,8 @@ class Conversation:
             extra.append(tool_mod.text_protocol(self.tools))
         messages[0] = {**messages[0], "content": messages[0]["content"] + "\n\n" + "\n\n".join(extra)}
         options = llm_options(s, self.llm.model)
-        splitter = SentenceSplitter(min_chunk_chars=int(s.knob("splitter.min_chunk_chars", 60)))
+        splitter = SentenceSplitter(min_chunk_chars=int(s.knob("splitter.min_chunk_chars", 60)),
+                                    first_clause_chars=int(s.knob("splitter.first_clause_chars", 30)))
         think = ThinkFilter()
         report = Report()
         stats = LLMStats()
