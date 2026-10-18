@@ -101,6 +101,10 @@ sequenceDiagram
 * Kokoro gets misaki's inline phoneme override `[word](/phonemes/)`. Other engines get the respelling as
   words ("koo min"). Measured: misaki reads "Cumin" as `kˈʌmən`; the override makes it `kˈumɪn`. A
   respelling with hyphens fed to Kokoro as text breaks (`❓`), which is why it is converted.
+* Only clear teaching phrases count: "pronounced" (optionally "like/as"), "said/spoken/read **like/as**", "say/pronounce
+  X like/as Y", "X sounds like Y", or the spelled form; and the respelling must be 1–4 short syllables with no function
+  words ("koo-min" yes, "that series what is another good one" no). A bare "read" used to teach the word "also" from
+  "also read that series what is another good one"; found in the real traces and now a test.
 * "Forget the pronunciation of cumin" removes it. Spelled forms work: "cumin is spelled C U M I N, say
   it koo-min".
 

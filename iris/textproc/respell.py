@@ -94,10 +94,12 @@ _WORD = r"(?P<word>[A-Za-z][A-Za-z'\-]{1,30})"
 _SAY = r"(?P<say>[A-Za-z][A-Za-z'\- ·]{0,40}?)"
 _LEAD = r"^\W*(?:(?:ok|okay|so|and|now|no|yes|iris|please|hey)\b\W*)*(?:you should |you need to |you must |can you |could you )?"
 _END = r"\W*$"
+# "pronounced" is enough on its own; "said / spoken / read" only count with a connector ("is said like ...").
+# Bare "read" matched ordinary talk ("also read that series what is another good one" taught the word "also").
+_PRON = r"(?:pronounced(?: like| as| as in| to sound like)?|(?:said|spoken|read) (?:like|as|as in|to sound like))"
 _TEACH = [
-    re.compile(rf"{_LEAD}(?:the )?(?:word )?{_WORD} (?:is |are |should be |must be |has to be )?(?:pronounced|said|spoken|read)"
-               rf"(?: like| as| as in| to sound like)? {_SAY}{_END}", re.I),
-    re.compile(rf"{_LEAD}(?:say|pronounce|read) (?:the )?(?:word )?{_WORD} (?:like|as|the way|to sound like) {_SAY}{_END}", re.I),
+    re.compile(rf"{_LEAD}(?:the )?(?:word )?{_WORD} (?:is |are |should be |must be |has to be )?{_PRON} {_SAY}{_END}", re.I),
+    re.compile(rf"{_LEAD}(?:say|pronounce) (?:the )?(?:word )?{_WORD} (?:like|as|the way|to sound like) {_SAY}{_END}", re.I),
     re.compile(rf"{_LEAD}(?:the )?(?:word )?{_WORD} (?:sounds like|is like) {_SAY}{_END}", re.I),
     # spelled out: "cumin is spelled C U M I N, say it koo-min"
     re.compile(rf"{_LEAD}(?:the )?(?:word )?(?P<spelled>(?:[A-Za-z][ \-.]){{2,}}[A-Za-z]) (?:is )?(?:pronounced|said|spoken|say it|pronounce it)"
@@ -109,6 +111,18 @@ _FORGET = re.compile(rf"{_LEAD}(?:forget|reset|undo|remove|delete|clear) (?:the 
                      rf"how (?:you )?(?:say|pronounce)) (?:the word )?{_WORD}{_END}", re.I)
 _NOT_WORDS = {"it", "its", "it's", "that", "that's", "this", "which", "what", "he", "she", "they", "you", "i", "we", "word",
               "name", "there", "how", "who", "why"}
+# words that are never part of a respelling: if the "respelling" has one, it was a sentence, not a lesson
+_FUNCTION = {"the", "a", "an", "you", "it", "is", "are", "was", "and", "to", "of", "in", "on", "that", "this", "what", "i", "me",
+             "my", "your", "for", "with", "be", "do", "does", "he", "she", "we", "they", "but", "or", "so", "if", "not"}
+
+
+def plausible(respelling: str) -> bool:
+    """1-4 short syllables, no function words: "koo-min", "kyoo min", "ku-MIN"; not "that series what is another one"."""
+    parts = [p for p in re.split(r"[-\s·]+", respelling.strip()) if p]
+    return (1 <= len(parts) <= 4 and all(len(p) <= 9 for p in parts) and sum(len(p) for p in parts) <= 24
+            and not any(p.lower() in _FUNCTION for p in parts))
+
+
 _TRAIL = re.compile(r"(?:\s+(?:please|thanks|thank you|okay|ok|right|then|now|instead|properly|correctly))+$", re.I)
 
 
@@ -131,7 +145,7 @@ def parse_teach(text: str) -> tuple[str, str] | None:
     say = _TRAIL.sub("", " ".join(say.split()).strip(" -·"))
     if word.isupper() and len(word) > 2:
         word = word.lower()                                   # spelled out as capital letters
-    if word.lower() in _NOT_WORDS or not say or say.lower() == word.lower():
+    if word.lower() in _NOT_WORDS or not say or say.lower() == word.lower() or not plausible(say):
         return None
     return word, say
 

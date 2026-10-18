@@ -131,6 +131,10 @@ flowchart LR
     WE -- yes --> OM["Open-Meteo geocoding + forecast"]
 ```
 
+* Requests are matched as said and again without their wrapper, so "Please search up and tell me what the weather
+  is in Cape Town currently", "You search what the current exchange it is from rands to U. S. dollars", "What about
+  yen to rand" and "They read a paragraph from Wikipedia on the Odyssey movie" all land (real phrasings from the
+  traces); two-part requests ("the time and weather in …") and requests without a topic go to the model.
 * The answer is spoken as computed (a `_Canned` stream through the normal speech chain), recorded as
   `fastpath: units | currency | timezone | wikipedia | weather` on the turn.
 * A failed lookup is *said* ("I couldn't reach the service just now"), never filled in by the model.

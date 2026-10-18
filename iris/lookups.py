@@ -19,6 +19,17 @@ from .tools import lookup
 
 _LEAD = r"^\W*(?:(?:hey|ok|okay|so|um|uh|and|now|please|iris|yes|well)\b\W*)*(?:(?:can|could|would|will) you\W+(?:please\W+)?)?"
 _END = r"\W*$"
+# the request wrapped around a lookup, as it comes out of speech recognition: "Please search up and tell me what the
+# weather is in Cape Town currently", "You search what the current exchange it is from rands to U. S. dollars",
+# "Perfect. Now I need another Wikipedia article ...". Tried as a second chance, so exact phrasings are untouched.
+_WRAP = re.compile(r"^\W*(?:(?:perfect|great|okay|ok|so|and|now|please|hey|iris|yes|well|they|you)\b\W*)*"
+                   r"(?:(?:i (?:want|need|would like) you to|(?:can|could|would|will) you|go ahead and)\W+)?"
+                   r"(?:(?:search|look)(?: up| for| online| it up)?(?: and)?\W+(?:(?:tell|give|show) me\W+)?)?", re.I)
+
+
+def _unwrap(text: str) -> str:
+    t = _WRAP.sub("", text.strip(), count=1)
+    return re.sub(r"\bu\.?\s?s\.?(?=\s+dollars?\b)", "us", t, flags=re.I)
 
 # -- units -------------------------------------------------------------------------------------
 # name -> (dimension, size in the base unit, singular, plural); temperature is handled apart
@@ -166,6 +177,7 @@ _FX = [
     re.compile(rf"{_LEAD}(?:what(?:'s| is)(?: the)? )?(?:current |latest |today'?s )?(?:exchange )?rate (?:from |of |between |for )?{_C.format(n='a')}\s+(?:to|and|into|against|vs|versus)\s+{_C.format(n='b')}{_END}", re.I),
     re.compile(rf"{_LEAD}(?:what(?:'s| is)(?: the)? )?(?:current |latest |today'?s )?{_C.format(n='a')}\s+(?:to|against|vs|versus)\s+{_C.format(n='b')}\s+(?:exchange )?rate{_END}", re.I),
     re.compile(rf"{_LEAD}(?:what(?:'s| is)(?: the)? )?(?:current |latest )?exchange rate (?:between |for )?{_C.format(n='a')}\s+(?:and|to|into)\s+{_C.format(n='b')}{_END}", re.I),
+    re.compile(rf"{_LEAD}(?:what|how) about {_C.format(n='a')}\s+(?:to|in|into)\s+{_C.format(n='b')}{_END}", re.I),
     # tolerant of recogniser noise in front ("You what the current exchange it is from rands to dollars")
     re.compile(rf"^.{{0,40}}?\bexchange(?: rate| it)?(?: is| was)? (?:from |between |of |for )?{_C.format(n='a')}\s+(?:to|and|into)\s+{_C.format(n='b')}{_END}", re.I),
     re.compile(rf"{_LEAD}how (?:much|many) {_C.format(n='b')} (?:is|are|do i get for|for) (?:a |an |one |1 )?{_C.format(n='a')}{_END}", re.I),
@@ -201,13 +213,16 @@ _WIKI = [
                rf"(?:from|of|on|about|out of|in) (?:the |a )?wikipedia(?: (?:article|page|entry))?(?: (?:on|about|for|of|called))?\s+(?P<topic>.+?){_END}", re.I),
     re.compile(rf"{_LEAD}(?:read|tell|give|say|get|show)(?: me)?(?: a| the| one)?\s*wikipedia(?: article| page| entry| paragraph| summary)?(?: (?:on|about|for|of))?\s+(?P<topic>.+?){_END}", re.I),
     re.compile(rf"{_LEAD}(?:tell me |show me )?what (?:does )?wikipedia says? (?:about|on|of)\s+(?P<topic>.+?){_END}", re.I),
+    re.compile(rf"{_LEAD}(?:i (?:need|want) |give me |get me |show me |read me )?(?:a |an |another |the )?(?:next )?wikipedia (?:article|page|entry|paragraph|summary)"
+               rf"(?: based)? (?:on|about|for|of)\s+(?P<topic>.+?){_END}", re.I),
     re.compile(rf"{_LEAD}(?:look up|search|find)\s+(?P<topic>.+?)\s+(?:on|in|from) wikipedia{_END}", re.I),
 ]
 _WEATHER = [
-    re.compile(rf"{_LEAD}(?:what(?:'s| is)|how(?:'s| is)) the (?:weather|temperature|forecast)(?: like)?(?: (?P<day>today|tomorrow))?(?: (?:in|for|at))\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow))?{_END}", re.I),
-    re.compile(rf"{_LEAD}(?:what(?:'s| is) )?the (?P<what>weather|temperature|forecast) (?P<day>today|tomorrow)?(?: (?:in|for|at))\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow))?{_END}", re.I),
-    re.compile(rf"{_LEAD}(?:weather|temperature|forecast)(?: (?P<day>today|tomorrow))? (?:in|for|at)\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow))?{_END}", re.I),
-    re.compile(rf"{_LEAD}(?:will it|is it going to|does it) (?:rain|snow)(?: (?P<day>today|tomorrow))? in\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow))?{_END}", re.I),
+    re.compile(rf"{_LEAD}(?:what(?:'s| is)|how(?:'s| is)) the (?:weather|temperature|forecast)(?: like)?(?: (?P<day>today|tomorrow))?(?: (?:in|for|at))\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow|currently|right now|now))?{_END}", re.I),
+    re.compile(rf"{_LEAD}(?:what(?:'s| is) )?the (?P<what>weather|temperature|forecast) (?P<day>today|tomorrow)?(?: (?:in|for|at))\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow|currently|right now|now))?{_END}", re.I),
+    re.compile(rf"{_LEAD}(?:weather|temperature|forecast)(?: (?P<day>today|tomorrow))? (?:in|for|at)\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow|currently|right now|now))?{_END}", re.I),
+    re.compile(rf"{_LEAD}what (?:the )?(?:weather|temperature|forecast) is(?: like)?(?: (?P<day>today|tomorrow))? (?:in|for|at)\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow|currently|right now|now))?{_END}", re.I),
+    re.compile(rf"{_LEAD}(?:will it|is it going to|does it) (?:rain|snow)(?: (?P<day>today|tomorrow))? in\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow|currently|right now|now))?{_END}", re.I),
     re.compile(rf"{_LEAD}how (?:hot|cold|warm) is it in\s+(?P<place>[a-z .'-]{{2,40}}?)(?: (?P<day2>today|tomorrow|now|right now))?{_END}", re.I),
 ]
 
@@ -266,10 +281,15 @@ def answer(text: str, settings=None) -> tuple[str, str] | None:
     t = (text or "").strip()
     if not t or len(t) > 200:
         return None
-    for intent, fn in (("units", convert_units), ("currency", fx), ("timezone", time_in),
-                       ("wikipedia", wikipedia), ("weather", weather)):
-        out = fn(t)
+    for text_try in dict.fromkeys((t, _unwrap(t))):        # as said, then without the "search up and tell me" wrapper
+        if not text_try:
+            continue
+        for intent, fn in (("units", convert_units), ("currency", fx), ("timezone", time_in),
+                           ("wikipedia", wikipedia), ("weather", weather)):
+            out = fn(text_try)
+            if out:
+                return intent, out
+        out = weather_here(text_try, settings)
         if out:
-            return intent, out
-    out = weather_here(t, settings)
-    return ("weather", out) if out else None
+            return "weather", out
+    return None
