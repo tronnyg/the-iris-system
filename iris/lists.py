@@ -153,8 +153,10 @@ def parse(text: str) -> tuple[str, str | None, str] | None:
     return None
 
 
-def resolve_item(llm, history: list[dict], phrase: str = "that") -> str | None:
-    """What does "add THAT to the list" refer to? Ask the model once, from the recent conversation."""
+def resolve_item(llm, history: list[dict], phrase: str = "that", options: dict | None = None) -> str | None:
+    """What does "add THAT to the list" refer to? Ask the model once, from the recent conversation.
+
+    `options`: the chat's own options: a different num_ctx makes Ollama reload the model (10+ s)."""
     recent = [m for m in history[-8:] if m.get("content")]
     if not recent:
         return None
@@ -165,7 +167,7 @@ def resolve_item(llm, history: list[dict], phrase: str = "that") -> str | None:
               'Reply with JSON only: {"item": "..."}; use {"item": ""} if it is unclear.\n\nConversation:\n' + convo)
     try:
         out = llm.complete_json([{"role": "user", "content": prompt}],
-                                options={"temperature": 0, "num_predict": 80, "num_ctx": 2048}) or {}
+                                options={**(options or {"num_ctx": 4096}), "temperature": 0, "num_predict": 80}) or {}
     except Exception:
         return None
     item = re.sub(r"\s+", " ", str(out.get("item") or "")).strip(" .\"'")

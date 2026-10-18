@@ -191,6 +191,8 @@ class Conversation:
         self.fallbacks_tried: set[str] = set()
         self._clean_replies: dict[str, int] = {}
         self.last_voice: tuple[str, int] | None = None   # for "do that 10 times more"
+        self._leaks: dict[str, int] = {}     # leaked replies per model; the first gets one retry with a nudge
+        self._nudge = False
         self.awaiting_search_until = 0.0     # IRIS asked what to search for: the next utterance is the topic
         self.prev_user_text = ""
         if model_traits(getattr(llm, "model", "")).get("leaks"):
@@ -268,7 +270,8 @@ class Conversation:
             self.writer.feedback(self.turn_no, fb, note=note)
             return "Noted. I'll learn from that." if fb == "bad" else "Noted."
         said = lists.command(text, session=self.writer.session, turn=self.turn_no or None,
-                             resolver=lambda: lists.resolve_item(self.llm, self.history))
+                             resolver=lambda: lists.resolve_item(self.llm, self.history,
+                                                                 options=llm_options(self.s, self.llm.model)))
         if said:                        # "add X to my feature list" (before "remember ...")
             self.writer.event("list", text=text, said=said)
             return said
@@ -330,6 +333,10 @@ class Conversation:
         native = False if fast else self.tools_native()
         if self.tools and not native and not fast:
             extra.append(tool_mod.text_protocol(self.tools))
+        if self._nudge:                                    # retry after a leaked reply
+            extra.append("Answer the user directly, in your own voice. Don't analyse or describe their request "
+                         "and don't refer to \"the user\".")
+            self._nudge = False
         messages[0] = {**messages[0], "content": messages[0]["content"] + "\n\n" + "\n\n".join(extra)}
         options = llm_options(s, self.llm.model)
         splitter = SentenceSplitter(min_chunk_chars=int(s.knob("splitter.min_chunk_chars", 60)),
@@ -527,8 +534,9 @@ class Conversation:
             # the model wrote its reasoning as the answer (nothing has been spoken): never use it
             # again, fall back to a clean model for this session and answer the turn again
             bad = self.llm.model
-            log.warning("%s leaked its reasoning into the reply", bad)
-            set_model_trait(bad, leaks=True)
+            n_leaks = self._leaks[bad] = self._leaks.get(bad, 0) + 1
+            log.warning("%s leaked its reasoning into the reply (%d)", bad, n_leaks)
+            retry = n_leaks == 1 and model_traits(bad).get("leaks") is not True
             try:
                 from .improve import insights
                 insights.add("models", "failure-cluster", f"{bad} speaks its reasoning: it ignores think=false",
@@ -545,6 +553,11 @@ class Conversation:
             with self.lock:
                 self.turn_no -= 1
                 self.live = None
+            if retry:                          # one slip isn't a verdict: same model, with a nudge
+                self._nudge = True
+                return self.respond(user_text, mode=mode, t_end=t_end, stt=stt, endpoint=endpoint,
+                                    audio_in=audio_in, stt_done_s=stt_done_s, speak=speak)
+            set_model_trait(bad, leaks=True)
             if not self._switch_model(reason="leaked its reasoning"):
                 self._say_simple(LEAK_NOTICE, speak)
                 return TurnResult(record={}, spoken=LEAK_NOTICE, cancelled="leak")
