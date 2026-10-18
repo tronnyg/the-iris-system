@@ -115,6 +115,14 @@ ratings, so lessons that don't help get pruned.
 
 ## Done
 
+- 2026-10-18 (fix/voice-consistency, from session 174811-38a0):
+  - **One voice**: the per-sentence pitch drift (up to +-1.5 semitones, questions lifted) is gone; only a
+    capped pace variation (+-3%) remains. Measured on real Kokoro audio: sentence-to-sentence median F0
+    spread 3.1 -> 1.4 semitones (what is left is Kokoro's own intonation, mostly on exclamations).
+    Contradictory pitch remarks change nothing; "stick with this voice" is a no-op.
+  - **Teach pronunciations by voice** (`iris/textproc/respell.py`): "the word cumin is pronounced koo-min".
+    Respelling -> misaki phonemes (`[cumin](/kˈumɪn/)`, checked against Kokoro's own G2P output; plain
+    respelling hyphens break it), other engines speak the respelling; saved + committed, spoken back.
 - 2026-10-18 (fix/lists-reliability, from session 174811-38a0):
   - **Lists hold only what you ask for**: the reflection's inferred requests/gaps go to hidden
     `state/observations.jsonl` (capped, deduplicated; `iris observations promote|dismiss`; shown in the

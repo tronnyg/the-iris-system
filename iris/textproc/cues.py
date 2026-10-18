@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 DEFAULT_TONES = ["calm", "warm", "dry", "playful", "excited", "serious", "whisper", "sad"]
 DEFAULT_EVENTS = ["pause", "long pause", "laugh", "chuckle", "sigh", "gasp"]
 
-TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z \-]{0,24})\]")
+# not a cue when a phoneme override follows: misaki's `[Cumin](/kˈumɪn/)` is a pronunciation (see respell.py)
+TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z \-]{0,24})\](?!\(/)")
 
 
 @dataclass

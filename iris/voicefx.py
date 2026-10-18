@@ -9,8 +9,9 @@ Voice settings (pod.yaml knobs):
     tts.speed             0.85 .. 1.2    speaking rate
     tts.volume_db        -12 .. +12      output gain
     tts.pitch_semitones   -4 .. +4       pitch shift (duration preserved)
-    tts.expressiveness     0 .. 2        prosody variation: per-sentence pace and pitch variation,
-                                         wider tone cues (Kokoro); exaggeration / temperature (Chatterbox)
+    tts.expressiveness     0 .. 2        prosody variation: a little per-sentence pace variation (max +-3%),
+                                         wider tone cues (Kokoro); exaggeration / temperature (Chatterbox).
+                                         Never pitch: the pitch only changes when you ask (one voice)
     tts.sentence_gap_ms    0 .. 800      silence between sentences
 """
 
@@ -34,6 +35,9 @@ _INT = r"(?:a (?:bit|little|lot)|way|much|slightly|kind of|kinda|really|very|so|
 _SUBJ = r"(?:(?:you(?:'re| are)|your voice(?: is)?|the voice(?: is)?|you sound|that(?:'s| is| was)|it(?:'s| is| was)|you(?:'re| are) speaking|you(?:'re| are) talking)\s+)?"
 _ASK = r"(?:(?:can you |could you |please )?(?:speak|talk|go)?\s*)"
 
+STEADY = "Okay, I'll leave my voice as it is."
+CONFLICT = "Those pull in opposite directions, so I haven't changed anything. Tell me higher or lower, once."
+
 # (pattern, knob, direction, acknowledgement)
 INTENTS: list[tuple[str, str | None, int, str]] = [
     (rf"{_SUBJ}{_INT}too fast|slow(?:er| down)|(?:speak|talk|go) (?:more )?slow(?:ly)?|more slowly", "tts.speed", -1, "Slowing down."),
@@ -54,6 +58,10 @@ INTENTS: list[tuple[str, str | None, int, str]] = [
      "tts.sentence_gap_ms", +1, "Longer pauses."),
     (rf"(?:shorter|fewer|less) pauses|pause less|{_SUBJ}{_INT}too many pauses|stop pausing so much",
      "tts.sentence_gap_ms", -1, "Shorter pauses."),
+    (r"(?:stick|stay|keep) (?:with |to )?(?:this|that|the same|your (?:current|normal)) voice|(?:don'?t|do not) change (?:your |the )?(?:voice|pitch)|"
+     r"(?:leave|keep) (?:it|the voice|your voice|the pitch|your pitch) (?:as (?:it is|is)|the same|steady|consistent|where it is)|"
+     r"(?:keep|make) (?:it|the voice|your voice|the pitch|your pitch) (?:steady|consistent|constant)|(?:one|the same) voice (?:all the time|throughout)",
+     "", 0, STEADY),
     (r"undo (?:that|the (?:last )?(?:voice )?change)|change it back|go back to how (?:it|you) (?:was|were|sounded)|that was better before|put it back",
      None, 0, "undo"),
 ]
@@ -90,13 +98,23 @@ def _steps(clause: str) -> int:
 
 def _match(t: str) -> list[VoiceChange]:
     out: list[VoiceChange] = []
+    dirs: dict[str, set[int]] = {}
+    steady = False
     for pat, knob, d, ack in INTENTS:
         if re.search(rf"(?:^|\b)(?:{pat})(?:\b|$)", t):
             if knob is None:
                 return [VoiceChange(None, 0, ack)]
+            if knob == "":
+                steady = True
+                continue
+            dirs.setdefault(knob, set()).add(d)
             if not any(c.knob == knob for c in out):
                 out.append(VoiceChange(knob, d, ack, _steps(t)))
-    return out
+    if any(len(v) > 1 for v in dirs.values()):
+        # "sometimes deeper and sometimes higher" is a complaint about inconsistency, not an order:
+        # obeying the first half would move the voice the wrong way
+        return [VoiceChange("", 0, CONFLICT)]
+    return out or ([VoiceChange("", 0, STEADY)] if steady else [])
 
 
 _LISTY = re.compile(r"\blist\b|\bto-?\s?do\b|\bimprovements\b", re.I)
@@ -129,6 +147,10 @@ def parse(text: str, last: tuple[str, int] | None = None) -> list[VoiceChange]:
             if not c or len(c.split()) > 14 or not _ABOUT_YOU.search(c) and not _EXPRESS_ONLY.search(c):
                 continue
             for ch in _match(c):
+                if ch.knob == "":
+                    continue
+                if any(x.knob == ch.knob and x.direction != ch.direction for x in found):
+                    return [VoiceChange("", 0, CONFLICT)]
                 same = next((x for x in found if x.knob == ch.knob and x.direction == ch.direction), None)
                 if same:
                     same.steps = max(same.steps, ch.steps)            # "monotone ... a lot less monotone": the strongest counts
@@ -207,15 +229,12 @@ def synth(tts, text: str, settings, opts: dict | None = None):
         opts["delivery"] = d
     opts.setdefault("exaggeration", round(min(1.6, 0.25 + 0.6 * expr), 2))
     opts.setdefault("temperature", round(min(1.1, 0.6 + 0.35 * expr), 2))
-    # sentence-to-sentence variety (what a flat voice lacks): pace and pitch drift a little per
-    # chunk, deterministically per text, questions lift and exclamations lean in; all scaled by
-    # expressiveness (about +-3.5% pace and +-0.45 semitone at 1.0)
+    # sentence-to-sentence variety: the pace drifts a little per chunk (deterministic per text, at most
+    # +-3% at full expressiveness). The pitch does NOT: an earlier version also drifted it up to +-1.5
+    # semitones and lifted questions, and the voice sounded "sometimes deeper, sometimes higher" (one
+    # voice means one pitch; it only moves when you ask for it).
     h = (sum(ord(ch) * (i + 1) for i, ch in enumerate(text)) % 997) / 997.0 * 2 - 1
-    h2 = (sum(ord(ch) * (i + 3) for i, ch in enumerate(text)) % 991) / 991.0 * 2 - 1
-    q = text.rstrip().endswith("?")
-    bang = text.rstrip().endswith("!")
-    jitter = 1 + expr * 0.035 * h + (0.02 * expr if bang else 0) - (0.015 * expr if q else 0)
-    pitch = pitch + max(-1.5, min(1.5, expr * (0.45 * h2 + (0.5 if q else 0) + (0.4 if bang else 0))))
+    jitter = 1 + min(expr, 2.0) / 2.0 * 0.03 * h
     f = 2 ** (pitch / 12) if pitch else 1.0
     res = tts.synth(text, speed=speed * jitter / f, opts=opts)
     audio = np.asarray(res.audio, dtype=np.float32)
@@ -288,6 +307,8 @@ def apply(settings, change: VoiceChange, history: list) -> str:
     """Apply one change live (settings.overrides) and persist it. Returns what to say."""
     from . import selfstore
     from .config import set_value
+    if change.knob == "":                         # "keep it as it is" / contradictory directions: nothing moves
+        return change.ack
     if change.knob is None:
         if not history:
             return "There's nothing to undo."

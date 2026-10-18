@@ -164,3 +164,139 @@ def test_a_model_that_echoes_the_command_is_not_an_item():
     c = conv(lambda m: json.dumps({"item": "Add that to improvements list."}))      # seen with the real model
     assert c.handle_command("Or incorrect add that to improvements list.") == "What should I add to your improvement list?"
     assert lists.items() == []
+
+
+# -- B1: one voice (session 174811: "sometimes your voice is deeper, sometimes higher") ---------------
+class _Tone:
+    def __init__(self):
+        self.speeds = []
+
+    def synth(self, text, speed=1.0, opts=None):
+        from types import SimpleNamespace
+        self.speeds.append(speed)
+        return SimpleNamespace(audio=[0.1] * 24000, sr=24000, audio_s=1.0)
+
+
+def test_pitch_does_not_drift_between_sentences(monkeypatch):
+    from iris import stt
+    rates = []
+    monkeypatch.setattr(stt, "resample", lambda a, sr_to, sr: rates.append(sr_to) or a)
+    s = Settings.load()
+    s.overrides["tts.expressiveness"] = 2.0
+    s.overrides["tts.pitch_semitones"] = 1
+    tts = _Tone()
+    for text in ("That is it.", "Is that it?", "Wow, that is great!", "Well, then,", "Cumin is a spice used in many dishes."):
+        voicefx.synth(tts, text, s)
+    assert len(set(rates)) == 1 and len(rates) == 5                   # every chunk shifted by exactly the asked pitch
+    assert all(abs(sp - 2 ** (-1 / 12) * 1.0) / (2 ** (-1 / 12)) <= 0.0301 for sp in tts.speeds)   # pace within +-3%
+
+
+def test_no_pitch_asked_means_no_pitch_shift(monkeypatch):
+    from iris import stt
+    monkeypatch.setattr(stt, "resample", lambda *a: pytest.fail("resampled although the pitch is 0"))
+    s = Settings.load()
+    s.overrides["tts.expressiveness"] = 2.0
+    for text in ("Is that right?", "Great!", "It is."):
+        voicefx.synth(_Tone(), text, s)
+
+
+@pytest.mark.parametrize("said", [
+    "Sometimes your voice is deeper and sometimes it is higher",
+    "sometimes the voice is higher, sometimes deeper",
+    "your voice is too high and then too low",
+])
+def test_contradictory_pitch_remarks_are_a_complaint_not_a_command(said):
+    ch = voicefx.parse(said)
+    assert [c.knob for c in ch] == [""] and ch[0].ack == voicefx.CONFLICT
+    c = conv()
+    before = voicefx.knob(c.s, "tts.pitch_semitones")
+    assert c.handle_command(said) == voicefx.CONFLICT
+    assert voicefx.knob(c.s, "tts.pitch_semitones") == before
+
+
+@pytest.mark.parametrize("said", ["Stick with this voice", "keep your voice the same", "don't change the voice", "keep it steady"])
+def test_stick_with_this_voice_changes_nothing_and_promises_nothing(said):
+    c = conv()
+    before = dict(c.s.overrides)
+    assert c.handle_command(said) == voicefx.STEADY
+    assert c.s.overrides == before
+
+
+def test_ordinary_voice_commands_still_work():
+    assert [(c.knob, c.direction) for c in voicefx.parse("a bit higher please")] == [("tts.pitch_semitones", 1)]
+    assert [(c.knob, c.direction) for c in voicefx.parse("you're too fast")] == [("tts.speed", -1)]
+    assert [c.knob for c in voicefx.parse("undo that")] == [None]
+
+
+# -- B2: teaching pronunciations by voice (session 174811: "cumin" wrong for nine turns) -----------------
+from iris.textproc import cues, respell  # noqa: E402
+from iris.textproc.pronounce import Pronouncer  # noqa: E402
+
+
+@pytest.mark.parametrize("spelling, ph", [
+    ("KOO-min", "kˈumɪn"), ("koo min", "kˈumɪn"), ("kyoo-min", "kjˈumɪn"), ("ku-MIN", "kəmˈɪn"),
+    ("fay-t", "fˈAt"), ("noyz", "nˈYz"), ("chair", "ʧˈɛɹ"), ("/kˈumɪn/", "kˈumɪn"),
+])
+def test_respelling_becomes_kokoro_phonemes(spelling, ph):
+    assert respell.phonemes(spelling) == ph        # stress sits before the vowel, like misaki's own output
+
+
+def test_unreadable_respelling_is_refused():
+    assert respell.phonemes("k00-m1n") is None and respell.phonemes("") is None
+
+
+@pytest.mark.parametrize("said, word, say", [
+    ("The word cumin is pronounced koo-min.", "cumin", "koo-min"),
+    ("Cumin is pronounced kyoo min", "cumin", "kyoo min"),
+    ("Say cumin like koo-min", "cumin", "koo-min"),
+    ("pronounce cumin as KOO-min please", "cumin", "KOO-min"),
+    ("Ok so the word cumin should be pronounced koomin", "cumin", "koomin"),
+    ("cumin is spelled C U M I N, say it koo-min", "cumin", "koo-min"),
+    ("Cumin is spelled c-u-m-i-n and it is pronounced koo-min", "cumin", "koo-min"),
+])
+def test_teaching_phrases(said, word, say):
+    got = respell.parse_teach(said)
+    assert got and (got[0].lower(), got[1]) == (word, say)
+
+
+@pytest.mark.parametrize("said", [
+    "How is the word cumin pronounced?", "it's pronounced koo-min", "the weather is nice today",
+    "cumin is pronounced cumin", "I like cumin in my chili",
+])
+def test_not_a_teaching_phrase(said):
+    assert respell.parse_teach(said) is None
+
+
+def test_taught_word_is_saved_applied_confirmed_and_reversible(monkeypatch):
+    c = conv()
+    c.pron.engine = "kokoro"
+    assert c.pron.apply("Cumin is a spice.") == "Cumin is a spice."
+    assert c.handle_command("The word cumin is pronounced koo-min.") == "Okay. Cumin. Did I get that right?"
+    assert c.pron.apply("Cumin is a spice, cumin!") == "[Cumin](/kˈumɪn/) is a spice, [cumin](/kˈumɪn/)!"
+    assert Settings.load().respell == {"cumin": "koo-min"}                       # saved in the self store...
+    from iris import selfstore
+    assert "you taught 'cumin'" in selfstore.git("log", "-1", "--format=%s")      # ...and committed
+    assert c.handle_command("forget the pronunciation of cumin") == "Okay, I'll say cumin the default way again."
+    assert c.pron.apply("Cumin is a spice.") == "Cumin is a spice." and Settings.load().respell == {}
+    assert c.handle_command("forget the pronunciation of cumin").startswith("I hadn't been taught")
+
+
+def test_other_engines_get_the_respelling_as_words():
+    p = Pronouncer({}, [], respell={"cumin": "KOO-min"}, engine="chatterbox")
+    assert p.apply("Add cumin.") == "Add koo min."
+
+
+def test_unreadable_teaching_is_refused_honestly():
+    c = conv()
+    assert "couldn't work out" in c.handle_command("the word cumin is pronounced qqq")
+    assert Settings.load().respell == {}
+
+
+def test_phoneme_markup_is_not_read_as_a_delivery_cue():
+    segs = cues.parse("[warm] Add [Cumin](/kˈumɪn/) now [pause] please")
+    assert [s.text for s in segs] == ["Add [Cumin](/kˈumɪn/) now", "please"] and segs[0].tone == "warm"
+    assert cues.strip("[warm] Add [Cumin](/kˈumɪn/) now") == "Add [Cumin](/kˈumɪn/) now"
+
+
+def test_promising_to_pronounce_tells_the_model_how_it_is_really_done():
+    assert "the word X is pronounced Y" in actions.NOTES["pronounce"]

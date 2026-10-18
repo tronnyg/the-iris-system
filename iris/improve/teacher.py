@@ -93,7 +93,8 @@ def roundtrip(engine: str, settings: Settings, sentences: list[str], listener: S
         tts = make_tts(engine)
         tts.load(engine_load_options(settings, engine), opts=synth_opts(settings, engine))
     pron = Pronouncer(settings.pronunciations,
-                      rules_override if rules_override is not None else settings.pron_rules.get(engine, []))
+                      rules_override if rules_override is not None else settings.pron_rules.get(engine, []),
+                      respell=settings.respell, engine=engine)
     opts = synth_opts(settings, engine) if engine != "tone" else {}
     items = []
     try:

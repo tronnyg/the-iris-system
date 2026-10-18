@@ -395,7 +395,7 @@ def cmd_say(a) -> None:
     tts = make_tts(engine)
     info = tts.load(engine_load_options(s, engine), opts=synth_opts(s, engine) if engine != "tone" else {})
     print(f"{engine}: {info}")
-    pron = Pronouncer(s.pronunciations, s.pron_rules.get(engine, []))
+    pron = Pronouncer(s.pronunciations, s.pron_rules.get(engine, []), respell=s.respell, engine=engine)
     res = tts.synth(pron.apply(a.text), float(s.knob("tts.speed", 1.0)), synth_opts(s, engine) if engine != "tone" else {})
     print(f"{res.audio_s:.2f}s of audio in {res.gen_s:.2f}s ({res.rtf or 0:.1f}x realtime)")
     if a.out:
