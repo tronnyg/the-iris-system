@@ -78,13 +78,19 @@ class STT:
         self._model()
         return time.perf_counter() - t0
 
-    def transcribe(self, audio: np.ndarray, beam_size: int = 1, prompt: str | None = None) -> Transcript:
+    def transcribe(self, audio: np.ndarray, beam_size: int = 1, prompt: str | None = None,
+                   hotwords: str | None = None, trim: bool = True) -> Transcript:
         audio = np.asarray(audio, dtype=np.float32).reshape(-1)
         t0 = time.perf_counter()
+        if trim:
+            audio = trim_silence(audio)
         segments, _info = self._model().transcribe(
             audio, language="en", beam_size=beam_size, vad_filter=False,
             condition_on_previous_text=False, without_timestamps=True,
-            initial_prompt=prompt,
+            initial_prompt=prompt, hotwords=hotwords or None,
+            # one retry at most: the default re-decodes up to five more times at rising
+            # temperatures when a transcript looks odd, which multiplies latency on noise
+            temperature=(0.0, 0.4),
         )
         segs = list(segments)
         text = " ".join(s.text.strip() for s in segs).strip()
@@ -104,6 +110,23 @@ class STT:
     def unload_all(cls) -> None:
         with cls._lock:
             cls._models.clear()
+
+
+def trim_silence(audio: np.ndarray, pad_s: float = 0.15, frame_s: float = 0.02, rel_db: float = 35.0) -> np.ndarray:
+    """Drop leading/trailing near-silence (keeping `pad_s`): less audio = faster Whisper,
+    and fewer hallucinations on silent tails. Quiet audio relative to its own peak only,
+    so a soft speaker is never cut."""
+    n = int(SAMPLE_RATE * frame_s)
+    if len(audio) < n * 10:
+        return audio
+    frames = audio[: len(audio) // n * n].reshape(-1, n)
+    db = 20 * np.log10(np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1)) + 1e-9)
+    loud = np.nonzero(db > db.max() - rel_db)[0]
+    if not len(loud):
+        return audio
+    pad = int(pad_s / frame_s)
+    a, b = max(0, loud[0] - pad), min(len(frames), loud[-1] + 1 + pad)
+    return audio[a * n: b * n] if (b - a) * n >= SAMPLE_RATE * 0.3 else audio
 
 
 def load_wav_16k(path) -> np.ndarray:

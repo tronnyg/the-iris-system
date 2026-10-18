@@ -23,7 +23,7 @@ class SlowSTT:
         self.calls = []
         self.prompts = []
 
-    def transcribe(self, audio, beam_size=1, prompt=None):
+    def transcribe(self, audio, beam_size=1, prompt=None, **kw):
         self.calls.append(len(audio))
         self.prompts.append(prompt)
         if len(self.calls) == 1:

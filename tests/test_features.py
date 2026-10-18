@@ -98,7 +98,7 @@ def test_session_ignores_speech_without_wake_word(monkeypatch):
     class STT:
         name = "fake"
 
-        def transcribe(self, audio, beam_size=1, prompt=None):
+        def transcribe(self, audio, beam_size=1, prompt=None, **kw):
             return Transcript(text=next(said), model="fake", secs=0, audio_s=1)
 
     s = Session(mode="vad", speak=False, listen=False, wake=True, tools=False)

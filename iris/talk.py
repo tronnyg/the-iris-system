@@ -300,7 +300,8 @@ class Session:
             audio_rel = self.writer.save_audio(utt.audio, turn_next)
         self.cur_utt = utt
         prompt = self.stt_context() if int(self.s.knob("stt.context", 1)) else None
-        tr = self.stt.transcribe(utt.audio, beam_size=int(self.s.knob("stt.beam_size", 1)), prompt=prompt)
+        tr = self.stt.transcribe(utt.audio, beam_size=int(self.s.knob("stt.beam_size", 1)), prompt=prompt,
+                                 hotwords=self.hotwords())
         if prompt and tr.text and _echoes_prompt(tr.text, prompt):
             tr.hallucination = True            # Whisper repeated its hint instead of hearing speech
         stt_done = time.perf_counter() - utt.t_end
@@ -379,6 +380,20 @@ class Session:
     def asleep(self) -> bool:
         return self.wake and time.perf_counter() > self.awake_until and not self.busy_job \
             and not self.jobs.unfinished_tasks
+    def hotwords(self) -> str | None:
+        """Names Whisper should spell right: the agent's, pod.yaml stt.hotwords, and
+        capitalised names from what IRIS remembers about you (cached per session)."""
+        if getattr(self, "_hotwords", None) is None:
+            words = [self.s.display_name]
+            words += [str(w) for w in ((self.s.pod.get("stt") or {}).get("hotwords") or [])]
+            skip = {"The", "User", "They", "He", "She", "It", "IRIS", "Iris", "I"}
+            for f in self.memory.facts():
+                for w in re.findall(r"\b[A-Z][a-z]{2,}\b", f):
+                    if w not in skip and w not in words:
+                        words.append(w)
+            self._hotwords = " ".join(dict.fromkeys(words[:24]))
+        return self._hotwords or None
+
     def stt_context(self) -> str | None:
         """A hint for Whisper: what IRIS just said plus names and rare words from the
         conversation, so a name heard once is spelled the same way next time."""

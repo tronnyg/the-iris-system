@@ -148,3 +148,22 @@ def test_silero_engine_decides_speech_by_probability():
     for f in frames(np.concatenate([noise(0.5), tone(1.0), noise(0.8)])):
         events += v.process(f)
     assert [e[0] for e in events] == ["start", "end"] and events[1][1]["reason"] == "silence"
+
+
+def test_trim_silence_keeps_speech_and_padding():
+    from iris.stt import trim_silence
+    sig = np.concatenate([noise(1.5, amp=0.001), tone(1.0), noise(2.0, amp=0.001)])
+    out = trim_silence(sig)
+    assert 1.2 * 16000 <= len(out) <= 1.45 * 16000          # 1 s of speech + ~0.15 s padding each side
+    quiet_talker = tone(1.0, amp=0.01)                        # soft speech is relative to its own peak
+    assert len(trim_silence(quiet_talker)) == len(quiet_talker)
+
+
+def test_hotwords_come_from_name_pod_and_memory():
+    from iris.memory import Delta, Memory
+    from iris.talk import Session
+    Memory().apply(Delta(["The user's sister is called Thandiwe.", "The user works at Shopify."], [], [], []))
+    s = Session(mode="ptt", speak=False, listen=False, wake=False)
+    s.s.pod["stt"] = {"hotwords": ["Kokoro"]}
+    hw = s.hotwords()
+    assert hw.startswith("IRIS") and "Kokoro" in hw and "Thandiwe" in hw and "Shopify" in hw and "The " not in hw
