@@ -247,3 +247,29 @@ def test_new_template_knobs_reach_existing_agents(iris_home):
     assert "vad.turn_hold_ms" not in Settings.load().pod["knobs"]
     assert sync_knobs(s.root) == ["vad.turn_hold_ms"]
     assert Settings.load().pod["knobs"]["vad.turn_hold_ms"]["tier"] == "auto" and sync_knobs(s.root) == []
+
+
+def test_long_speech_goes_to_whisper_even_with_moonshine(monkeypatch):
+    from iris import stt as stt_mod
+    from iris.stt import Transcript
+    calls = []
+
+    class FakeMoon:
+        def generate(self, audio):
+            calls.append("moonshine")
+            return [[1]]
+
+    class FakeTok:
+        def decode_batch(self, toks):
+            return ["moon text"]
+
+    class FakeWhisper:
+        def transcribe(self, audio, **kw):
+            calls.append("whisper")
+            return Transcript(text="whisper text", model="base.en", secs=0.0, audio_s=len(audio) / 16000)
+
+    s = stt_mod.STT("moonshine/base")
+    monkeypatch.setitem(stt_mod.STT._models, ("moonshine/base", "cpu"), (FakeMoon(), FakeTok()))
+    monkeypatch.setitem(stt_mod.STT._fallbacks, ("long", False), FakeWhisper())
+    assert s.transcribe(tone(3.0)).text == "moon text"
+    assert s.transcribe(tone(14.0)).text == "whisper text" and calls == ["moonshine", "whisper"]

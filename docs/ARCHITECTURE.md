@@ -135,6 +135,26 @@ type, keep-alive, ...) and per-model request profiles live in the self store
 (`pods/brain/ollama.yaml`). The loops never edit that file; `iris ollama set/profile` (you or
 Claude Code) do, as commits you can roll back. `mode: external` uses `$OLLAMA_HOST` instead.
 
+## Doing what is said
+
+A small local model announces actions it doesn't take (session 162726-1a54: "Let me search the web"
+x3 with no tool call, then "I initiated a search"; after one such claim in the history its tool
+calls fell from 4/8 to 0/8). `iris/actions.py` handles it in code: explicit search requests (and the
+topic IRIS just asked for) run `web_search` directly and the model answers from the results; a reply
+that announces a search without calling the tool gets it run; replies claiming a search, a list add or
+a voice change that nothing did are recorded (`false_claim`, a finding) and the stored history gets a
+note the model sees but the user never hears. `fastpath.py` answers time, date and arithmetic without
+the model. List phrases, voice phrases and corrections are rule-based first, model-assisted second
+("add that to the list" asks the model once what *that* is, with the chat's own context size so
+Ollama doesn't reload).
+
+## Speaking
+
+Engine output is trimmed to the speech (`voicefx.trim_edges`) and a gap is put back by how the chunk
+ends (sentence 170 ms, clause 80, mid-phrase 25), because engines pad every chunk (Kokoro ~0.3 s
+before, ~0.54 s after). The first chunk of a long reply starts at a clause, or at a phrase boundary
+for comma-free sentences (`splitter.first_clause_chars`, `first_phrase_words`).
+
 ## Background jobs
 
 `iris/jobs.py`: nightly (`iris-night.timer`), idle (`iris-idle.timer`, every 30 min, only after

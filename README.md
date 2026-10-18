@@ -95,8 +95,17 @@ end-of-turn model: a finished sentence gets a reply after ~0.25 s of silence, a 
 pause gets up to 2 s. Both run on the CPU in a few ms per check; set in pod.yaml
 `vad: {engine: silero|energy, smart_turn: true|false, turn_threshold, turn_max_ms}`.
 
-**Faster ears:** `iris set model stt moonshine/base` switches to Moonshine (~100 ms per
-utterance here vs ~400 ms for Whisper base.en); the night loop compares both on your voice.
+**It does what it says:** explicit requests like "search the web for ..." (or a topic you answer
+after "what should I search for?") run the search directly instead of hoping the model calls the
+tool; a reply that announces a search without one gets it run; replies that claim a search, a
+list add or a voice change that never happened are flagged (trace + finding) and kept out of
+the history as precedent. "Add that to the features list" works however it is phrased (the model
+also has `add_to_list` / `show_list` tools, and the acknowledgement repeats what was stored).
+Voice requests are read in long dictated form too ("a lot less monotone", "now do that 10 times
+more"). `iris session` shows what happened in a conversation and what cost you time.
+
+**Faster ears:** `iris set model stt moonshine/base` switches to Moonshine (about 0.1-0.3 s per
+utterance here vs ~0.55 s for Whisper base.en; speech over 12 s goes to Whisper automatically); the night loop compares both on your voice.
 Time, date and arithmetic questions are answered instantly without the LLM.
 
 **Models that think out loud** (some Qwen3 builds ignore "thinking off"): IRIS never speaks the

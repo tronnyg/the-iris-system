@@ -78,7 +78,32 @@ ratings, so lessons that don't help get pruned.
   caching (already designed for: stable system prompt, block-trimmed history) matters more for
   first audio. Revisit only if tok/s limits long replies.
 
-## Next ideas (from the 2026-10-18 session)
+## Measured and rejected (2026-10-18, so nobody repeats them)
+
+- **Kokoro prosody levers:** `[word](+2)` stress markup, ALL CAPS, exclamation marks, commas,
+  ellipses and em-dashes, and scaling the prosody half of the style vector all left pitch
+  variation unchanged or *reduced* it (autocorrelation F0, 6 sentences; the stress markup gave
+  bit-identical audio). Per-word emphasis needs another engine (Chatterbox `exaggeration`) or
+  a model with explicit prosody control; the per-sentence pace/pitch variation in `voicefx.synth`
+  is the only thing that moves.
+- **Sentence-level recall chunks:** the stored episode summaries are generic ("The user was
+  prompted to clarify their request"), so finer chunks matched worse. The fix is better
+  summaries (the reflection prompt), not finer matching.
+- **Out-of-band thinking** for models that think aloud (1100+ tokens on "2+2") and prefilling
+  an empty think block: see the leak guard.
+- **Higher Smart Turn threshold** against cut-offs: it was 91-99% sure at the cut points
+  (sentence ends), so thresholds can't separate them; hold time can.
+
+## Next ideas (from the 2026-10-18 sessions)
+
+- Better episode summaries (they are the recall bottleneck), then re-enable looser matching.
+- Tool-call reliability benchmark per model: gemma4 calls the search tool ~75% of the time with
+  a clean history and 0% after one false claim (now guarded in code); try other tool-capable
+  models (the MODELS tab has TEST) before adding more tools.
+- Word-level emphasis via Chatterbox (`exaggeration`) behind the same expressiveness knob,
+  judged with the A/B `iris rate` clips.
+- Log and learn from every end-of-turn decision (endpoint.segments is recorded now): fit a
+  per-user rule for pauses between sentences instead of a fixed hold.
 
 - Moonshine *streaming*: transcribe while the user is still speaking, so the transcript is
   ready the moment Smart Turn ends the turn (another ~100 ms off first sound).
@@ -89,6 +114,22 @@ ratings, so lessons that don't help get pruned.
 - Rolling conversation summary instead of dropping the older half of the history.
 
 ## Done
+
+- 2026-10-18 (session-fixes, from the analysis of session 162726-1a54):
+  - **Dead air**: Kokoro chunks carry ~0.3 s of leading and ~0.54 s of trailing silence; trimmed
+    (755 ms per chunk, no speech energy lost) and replaced by punctuation-aware gaps. First sound
+    arrives ~0.3 s sooner and sentences no longer stop-start with 0.8 s holes.
+  - **Honesty**: `iris/actions.py` (forced search, announced search carried out, false-claim
+    flags + history notes), list tools, tolerant list phrases, persona Tools paragraph.
+  - **First sound**: leak guard no longer holds the first sentence of verified-clean models
+    (voice waited for the whole reply on 11/18 turns); phrase-boundary first chunk for
+    comma-free sentences; one retry before a model is switched.
+  - **Listening**: Moonshine switched on in the live agent (hybrid: >12 s to Whisper), recogniser
+    corrections ('future list' -> 'feature list'), false-trigger audio no longer overwritten.
+  - **Voice commands**: long requests, magnitudes, 'do that 10 times more', expressiveness 0..2.
+  - **Turn-taking**: adaptive hold + long-speech grace + tunable `vad.turn_hold_ms` (the old
+    tuner rule moved a knob Smart Turn ignores), per-segment logging.
+  - **Memory**: recall precision (9-19/19 -> 2/19 injected), bad lessons filtered and removed.
 
 - 2026-10-18 (night session, branch auto-improvements):
   - **Fast path**: time, date and arithmetic answered instantly and exactly, no LLM.
