@@ -1,0 +1,438 @@
+# Replay cases (train). See iris/replay.py. Real utterances are redacted by hand.
+cases:
+- id: list-add-01
+  said: add buy a new microphone to my todo list
+  expect:
+    route: list
+    list: todo
+    item: buy a new microphone
+- id: list-add-03
+  said: add to todo buy milk
+  expect:
+    route: list
+    list: todo
+    item: buy milk
+- id: list-add-04
+  said: 'note for the features list: a kitchen timer'
+  expect:
+    route: list
+    list: features
+    item: a kitchen timer
+- id: list-add-05
+  said: add a timer tool to my feature list
+  expect:
+    route: list
+    list: features
+    item: a timer tool
+- id: list-add-06
+  said: Add to improvements the voice should stay the same
+  expect:
+    route: list
+    list: improvements
+    item: the voice should stay the same
+- id: list-add-07
+  said: add to improvements list that the voice tone is sometimes deeper and sometimes higher
+  expect:
+    route: list
+    list: improvements
+    item: the voice tone is sometimes deeper
+- id: list-add-09
+  said: okay so add faster replies to the improvement list
+  expect:
+    route: list
+    list: improvements
+    item: faster replies
+- id: list-add-10
+  said: can you add reading the news to my todo list
+  expect:
+    route: list
+    list: todo
+    item: reading the news
+- id: list-show-todo
+  said: what's on my todo list?
+  expect:
+    route: list
+    reply_contains:
+    - to-do list
+- id: list-that-asks
+  said: add that to improvements list
+  expect:
+    route: list
+    reply_contains:
+    - What should I add
+- id: list-not-01
+  said: add salt to the soup
+  expect:
+    route: model
+- id: list-not-02
+  said: Did you add it to the list?
+  expect:
+    route: model
+- id: list-not-03
+  said: add more features to your voice
+  expect:
+    route: model
+- id: list-not-04
+  said: What's the best way to add to a todo app?
+  expect:
+    route: model
+- id: list-not-05
+  said: If you added to a list please.
+  expect:
+    route: model
+- id: list-not-06
+  said: tell me about the history of the shopping list
+  expect:
+    route: model
+- id: voice-01
+  said: you're talking too fast
+  expect:
+    route: voice
+    knobs:
+      tts.speed: -1
+- id: voice-02
+  said: slower please
+  expect:
+    route: voice
+    knobs:
+      tts.speed: -1
+- id: voice-04
+  said: louder
+  expect:
+    route: voice
+    knobs:
+      tts.volume_db: 1
+- id: voice-06
+  said: quieter
+  expect:
+    route: voice
+    knobs:
+      tts.volume_db: -1
+- id: voice-07
+  said: your voice is too high
+  expect:
+    route: voice
+    knobs:
+      tts.pitch_semitones: -1
+- id: voice-08
+  said: a bit deeper
+  expect:
+    route: voice
+    knobs:
+      tts.pitch_semitones: -1
+- id: voice-09
+  said: your voice is too deep
+  expect:
+    route: voice
+    knobs:
+      tts.pitch_semitones: 1
+- id: voice-10
+  said: you sound robotic
+  expect:
+    route: voice
+    knobs:
+      tts.expressiveness: 1
+- id: voice-12
+  said: calmer
+  expect:
+    route: voice
+    knobs:
+      tts.expressiveness: -1
+- id: voice-13
+  said: longer pauses
+  expect:
+    route: voice
+    knobs:
+      tts.sentence_gap_ms: 1
+- id: voice-14
+  said: fewer pauses
+  expect:
+    route: voice
+- id: voice-undo-empty
+  said: undo that
+  expect:
+    route: voice
+    reply_contains:
+    - nothing to undo
+- id: voice-steady-1
+  said: stick with this voice
+  expect:
+    route: voice
+    steady: true
+- id: voice-steady-2
+  said: keep your voice the same
+  expect:
+    route: voice
+    steady: true
+- id: voice-conflict
+  said: sometimes your voice is deeper and sometimes it is higher
+  expect:
+    route: voice
+    reply_contains:
+    - opposite directions
+    knobs:
+      tts.pitch_semitones: 0
+- id: voice-turn-it-down
+  said: turn it down a bit
+  expect:
+    route: voice
+    knobs:
+      tts.volume_db: -1
+- id: voice-not-01
+  said: the train was too fast
+  expect:
+    route: model
+- id: voice-not-02
+  said: is it too slow?
+  expect:
+    route: model
+- id: voice-not-03
+  said: what does the word faster mean
+  expect:
+    route: model
+- id: voice-not-04
+  said: my cat is too loud at night
+  expect:
+    route: model
+- id: voice-not-05
+  said: that movie was too long
+  expect:
+    route: model
+- id: pron-teach-1
+  said: the word cumin is pronounced koo-min
+  expect:
+    route: pronounce
+    respell:
+      cumin: koo-min
+- id: pron-teach-2
+  said: say cumin like kyoo min
+  expect:
+    route: pronounce
+    respell:
+      cumin: kyoo min
+- id: pron-teach-3
+  said: cumin is spelled C U M I N, say it koo-min
+  expect:
+    route: pronounce
+    respell:
+      cumin: koo-min
+- id: pron-teach-4
+  said: pronounce nguyen as win
+  expect:
+    route: pronounce
+    respell:
+      nguyen: win
+- id: pron-teach-5
+  said: okay so the word quinoa is pronounced keen-wah
+  expect:
+    route: pronounce
+    respell:
+      quinoa: keen-wah
+- id: pron-complaint-01
+  said: the word cuban is pronounced wrong
+  expect:
+    route: model
+    no_respell: true
+- id: pron-complaint-02
+  said: the word tomato is pronounced differently in England
+  expect:
+    route: model
+    no_respell: true
+- id: pron-complaint-03
+  said: cumin is pronounced incorrectly by most people
+  expect:
+    route: model
+    no_respell: true
+- id: pron-forget-none
+  said: forget the pronunciation of cumin
+  expect:
+    route: pronounce
+    reply_contains:
+    - hadn't been taught
+- id: pron-not-01
+  said: say hello like you mean it
+  expect:
+    route: model
+    no_respell: true
+- id: pron-not-02
+  said: she said hello like a pro
+  expect:
+    route: model
+    no_respell: true
+- id: pron-not-03
+  said: the book is read aloud
+  expect:
+    route: model
+    no_respell: true
+- id: pron-not-04
+  said: I read books like this
+  expect:
+    route: model
+    no_respell: true
+- id: rating-good
+  said: good answer
+  expect:
+    route: rating
+    rating: good
+  turns: 1
+- id: rating-bad-why
+  said: bad answer, too long
+  expect:
+    route: rating
+    rating: bad
+  turns: 2
+- id: memory-remember-1
+  said: remember that my sister is called Ana
+  expect:
+    route: model
+    memory_fact: sister is called Ana
+- id: memory-remember-2
+  said: remember that I like cumin
+  expect:
+    route: model
+    memory_fact: cumin
+- id: fast-01
+  said: what time is it
+  expect:
+    route: fastpath:time
+    reply_contains: []
+- id: fast-02
+  said: what's the date today
+  expect:
+    route: fastpath:date
+    reply_contains: []
+- id: fast-03
+  said: what's seventeen times twenty three
+  expect:
+    route: fastpath:calc
+    reply_contains:
+    - '391'
+- id: fast-04
+  said: what is 15 percent of 240
+  expect:
+    route: fastpath:calc
+    reply_contains:
+    - '36'
+- id: fast-05
+  said: square root of 81
+  expect:
+    route: fastpath:calc
+    reply_contains:
+    - '9'
+- id: fast-06
+  said: what's 2 plus 2
+  expect:
+    route: fastpath:calc
+    reply_contains:
+    - '4'
+- id: fast-07
+  said: what's one thousand two hundred divided by four
+  expect:
+    route: fastpath:calc
+    reply_contains:
+    - '300'
+- id: fast-08
+  said: what is three point five times two
+  expect:
+    route: fastpath:calc
+    reply_contains:
+    - '7'
+- id: fast-not-01
+  said: what time does the game start
+  expect:
+    route: model
+- id: fast-not-03
+  said: how do I calculate compound interest
+  expect:
+    route: model
+- id: lookup-units-1
+  said: convert 5 km to miles
+  expect:
+    route: lookup:units
+    reply_contains:
+    - '3.11'
+- id: lookup-units-2
+  said: how many feet are in a mile
+  expect:
+    route: lookup:units
+    reply_contains:
+    - 5,280
+- id: lookup-weather-rain
+  said: will it rain in Durban
+  expect:
+    route: lookup:weather
+- id: lookup-fx-amount
+  said: what is 100 dollars in rand
+  expect:
+    route: lookup:currency
+- id: lookup-fx-rate
+  said: what's the rand to dollar rate
+  expect:
+    route: lookup:currency
+- id: lookup-wiki-1
+  said: read me a paragraph from Wikipedia on cumin
+  expect:
+    route: lookup:wikipedia
+- id: lookup-wiki-2
+  said: tell me what Wikipedia says about the Kalahari Desert
+  expect:
+    route: lookup:wikipedia
+- id: lookup-not-03
+  said: read me a paragraph about dogs
+  expect:
+    route: model
+- id: lookup-not-04
+  said: what is 5 pounds
+  expect:
+    route: model
+- id: lookup-not-06
+  said: is cumin in the spice rack
+  expect:
+    route: model
+- id: lookup-not-07
+  said: how is the weather affecting my mood
+  expect:
+    route: model
+- id: search-02
+  said: look up the latest news about spacex
+  expect:
+    route: search
+- id: search-03
+  said: what's the latest news in South Africa
+  expect:
+    route: search
+- id: search-04
+  said: google tide times for Muizenberg
+  expect:
+    route: search
+- id: search-05
+  said: can you search online for a good chili recipe
+  expect:
+    route: search
+- id: search-not-01
+  said: did you search the web?
+  expect:
+    route: model
+- id: search-not-02
+  said: the search feature isn't working
+  expect:
+    route: model
+- id: search-not-03
+  said: I searched for hours and found nothing
+  expect:
+    route: model
+- id: garble-lowconf-short
+  said: turn the lights on
+  expect:
+    route: garble
+    reply_contains:
+    - Did you say
+  stt:
+    avg_logprob: -1.1
+- id: garble-long
+  said: I would like you to explain in some detail how the nitrogen cycle works in a garden please
+  expect:
+    route: model
+  note: long speech is understood from context
+  stt:
+    avg_logprob: -1.5

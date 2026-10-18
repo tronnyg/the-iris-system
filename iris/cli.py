@@ -545,6 +545,34 @@ def cmd_evals(a) -> None:
     print(json.dumps(summarize(res)))
 
 
+def cmd_replay(a) -> None:
+    """iris replay [--split train|holdout|all] [--live] [--only ID] [--json] | split SRC: real utterances and what must happen."""
+    from . import replay
+    if a.args and a.args[0] == "split":
+        if len(a.args) != 2:
+            sys.exit("usage: iris replay split <cases.yaml | folder>")
+        tr, ho = replay.write_split(__import__("pathlib").Path(a.args[1]))
+        print(f"train {tr} cases -> {replay.TRAIN_DIR}\nholdout {ho} cases -> {replay.holdout_dir()} (outside the repo)")
+        return
+    cases = replay.load_cases(a.split)
+    if not cases:
+        sys.exit(f"no {a.split} replay cases (looked in {replay.TRAIN_DIR} and {replay.holdout_dir()})")
+    results = replay.run(cases, live=a.live, only=a.only)
+    summ = replay.summarize(results)
+    if a.json:
+        print(json.dumps(summ))
+    else:
+        for r in results:
+            if r.status != "pass" or a.verbose:
+                print(f"{r.status:5} {r.case.id:34} {r.case.said[:60]!r}" + "".join(f"\n        -> {f}" for f in r.failures))
+        print(f"\n{summ['passed']}/{summ['cases']} pass   by route {summ['by_route']}")
+        if summ["known_failing"]:
+            print(f"known failing ({len(summ['known_failing'])}): {', '.join(summ['known_failing'])}")
+        if summ["now_passing"]:
+            print(f"NOW PASSING, remove known_failing: {', '.join(summ['now_passing'])}")
+    sys.exit(1 if summ["regressions"] else 0)
+
+
 # -- configuration ------------------------------------------------------------------------
 def cmd_set(a) -> None:
     from .config import set_value
@@ -788,6 +816,13 @@ def main(argv=None) -> None:
     p.add_argument("--judge", action="store_true")
     p.add_argument("--golden", action="store_true", help="golden cases only")
     p.add_argument("--model")
+    p = add("replay", cmd_replay, "replay real utterances against the routing and commands (the benchmark): iris replay split SRC")
+    p.add_argument("args", nargs="*", help="split SRC")
+    p.add_argument("--split", default="train", choices=["train", "holdout", "all"])
+    p.add_argument("--live", action="store_true", help="real model and tools on a scratch copy of your agent (GPU)")
+    p.add_argument("--only", help="only cases whose id contains this")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("-V", "--verbose", action="store_true", help="list passing cases too")
     p = add("set", cmd_set, "change a knob or model yourself")
     p.add_argument("section", choices=["knob", "model"])
     p.add_argument("name")

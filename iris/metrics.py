@@ -105,6 +105,11 @@ def compute(turns: list[dict]) -> dict:
         rtf = [(_get(t, "tts", "audio_s") or 0) / g for t in voiced if (g := _get(t, "tts", "gen_s"))]
         m["tts_rtf"] = round(mean(rtf), 2) if rtf else None
         m["errors"] = sum(1 for t in answered if t.get("error"))
+    routes = [t.get("route") for t in answered if t.get("route")]
+    if routes:                                            # who answered: code (exact skills) or the model
+        counts = {r: routes.count(r) for r in sorted(set(routes))}
+        m["route_counts"] = counts
+        m["code_handled_rate"] = round(sum(v for k, v in counts.items() if k.startswith(("fastpath:", "lookup:"))) / len(routes), 3)
     follow = _follow_ups(answered)
     m.update(follow)
     fb = [t.get("feedback") for t in answered]

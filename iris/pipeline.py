@@ -156,11 +156,15 @@ class _Canned:
             stats.done_reason, stats.tokens = "stop", len(self.text.split())
 
 
+LOOKUP_INTENTS = {"units", "currency", "timezone", "wikipedia", "weather"}      # lookups.answer; the rest is fastpath.answer
+
+
 @dataclass
 class TurnResult:
     record: dict
     spoken: str
     cancelled: str | None = None
+    route: str = "model"        # who produced the answer: model | search | fastpath:X | lookup:X | list | voice | pronounce | rating | garble
 
 
 @dataclass
@@ -202,6 +206,7 @@ class Conversation:
         self.awaiting_search_until = 0.0     # IRIS asked what to search for: the next utterance is the topic
         self.awaiting_list: tuple[str, float] | None = None   # IRIS asked what to add to this list (until ts)
         self.pending_heard: tuple[str, float] | None = None   # IRIS asked "did you say ...?" (text, until ts)
+        self.cmd_route: str | None = None                      # which command handle_command just handled (for the turn's route)
         self._asked_last = False
         self.prev_user_text = ""
         if model_traits(getattr(llm, "model", "")).get("leaks"):
@@ -268,6 +273,7 @@ class Conversation:
         """Feedback and memory commands. Returns a short spoken acknowledgement or None."""
         # lists come first: "add to improvements list that the voice is too high" is a list item,
         # not a pitch command (it used to be swallowed by the voice parser)
+        self.cmd_route = None
         said = self._awaited_list_item(text) or lists.command(
             text, session=self.writer.session, turn=self.turn_no or None,
             resolver=lambda: lists.resolve_item(self.llm, self.history, options=llm_options(self.s, self.llm.model)))
@@ -276,10 +282,12 @@ class Conversation:
             if wanted:                   # an order the phrase matcher couldn't cut apart: ask the model, never drop it
                 said = self._list_by_model(text, wanted)
         if said:                        # "add X to my feature list" (before "remember ...")
+            self.cmd_route = "list"
             self.writer.event("list", text=text, said=said)
             return said
         said = self._pronunciation_command(text)
         if said:
+            self.cmd_route = "pronounce"
             self.writer.event("pronunciation", text=text, said=said)
             return said
         changes = voicefx.parse(text, last=self.last_voice)
@@ -288,11 +296,13 @@ class Conversation:
             moved = [c for c in changes if c.knob]
             if moved:
                 self.last_voice = (moved[-1].knob, moved[-1].direction)
+            self.cmd_route = "voice"
             self.writer.event("voice_feedback", text=text, changes=[c.knob for c in changes], said=said)
             return " ".join(said)
         parsed = parse_feedback(text)
         if parsed and self.turn_no > 0:
             fb, note = parsed
+            self.cmd_route = "rating"
             self.writer.feedback(self.turn_no, fb, note=note)
             return "Noted. I'll learn from that." if fb == "bad" else "Noted."
         fact = remember_command(text)
@@ -388,11 +398,11 @@ class Conversation:
         user_text, said = self._confirm_garbled(user_text, stt)
         if said is not None:
             self._say_simple(said, speak)
-            return TurnResult(record={}, spoken=said)
+            return TurnResult(record={}, spoken=said, route="garble")
         ack = self.handle_command(user_text)
         if ack is not None:          # feedback isn't a conversational turn
             self._say_simple(ack, speak)
-            return TurnResult(record={}, spoken=ack)
+            return TurnResult(record={}, spoken=ack, route=self.cmd_route or "command")
         with self.lock:
             self.turn_no += 1
             turn = self.turn_no
@@ -694,6 +704,8 @@ class Conversation:
             if actions.asked_for_topic(spoken):
                 self.awaiting_search_until = time.time() + 90
 
+        route = (("lookup:" if fast[0] in LOOKUP_INTENTS else "fastpath:") + fast[0] if fast
+                 else "search" if forced or any(tr.name == "web_search" for tr in tool_runs) else "model")
         rec = {
             "turn": turn, "mode": mode, "audio_in": audio_in, "user_text": user_text,
             "stt": stt, "endpoint": endpoint, "llm": stats.as_dict(),
@@ -703,6 +715,7 @@ class Conversation:
             "timing": {k: (round(v, 3) if isinstance(v, float) else v) for k, v in timing.items()},
             "playback": playback, "barge_in": barge, "cancelled": cancelled, "error": error,
             "tools": [tr.as_dict() for tr in tool_runs] or None,
+            "route": route,
             "fastpath": fast[0] if fast else None,
             "forced": ("search" if forced else None) or ("recovered-search" if any(
                 tr.name == "web_search" for tr in tool_runs) and not forced and actions.announces_search(
@@ -718,7 +731,7 @@ class Conversation:
             self.on_turn(rec)
         except Exception as e:
             log.warning("on_turn callback failed: %s", e)
-        return TurnResult(record=rec, spoken=spoken, cancelled=cancelled)
+        return TurnResult(record=rec, spoken=spoken, cancelled=cancelled, route=route)
 
     def _record_false_claims(self, claims: list[str], user_text: str, spoken: str) -> None:
         log.warning("reply claimed an action nothing took (%s): %r", ",".join(claims), spoken[:80])

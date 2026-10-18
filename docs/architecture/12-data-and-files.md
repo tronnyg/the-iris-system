@@ -51,6 +51,7 @@ flowchart TB
 | `state/scout.json` | `{seen_models, last_run}` | `improve/scout.py` | no |
 | `state/jobs.pause.json` | `{since, until}` | `jobs.py` | no |
 | `state/requests.jsonl`, `escalation.json` | legacy (older versions), safe to delete | — | no |
+| `../replay/holdout/*.yaml` (under IRIS_HOME, not per agent) | held-out replay cases, kept out of the repo on purpose | `iris replay split` | no |
 | `night/YYYY-MM-DD/` | `results.json`, `idle-HHMM.json`, `judge.json`, `clips/`, `prompt-candidate-*.txt` | night loop | no |
 | `reports/YYYY-MM-DD.md` + `.html` | morning report | `improve/report.py` | no |
 | `proposals/*.json` | evidence for proposal branches | `selfstore`, `review` | no |

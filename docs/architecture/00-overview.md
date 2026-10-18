@@ -203,6 +203,7 @@ Kept complete by `tests/test_docs.py`: a new module without a row here fails the
 | `iris/trace.py` | trace records, audio files, session index | [11](11-observability.md) |
 | `iris/metrics.py` | traces → the numbers the loops optimise | [11](11-observability.md) |
 | `iris/evals.py` | eval cases, deterministic checks, regression harvesting | [08](08-learning-loops.md) |
+| `iris/replay.py` | the replay benchmark: real utterances and what must happen (routing, commands, extraction) | [08](08-learning-loops.md#11-the-replay-benchmark) |
 | `iris/jobs.py` | background jobs, pause/stop, systemd timers | [09](09-jobs-and-processes.md) |
 | `iris/doctor.py` | `iris doctor`: checks every part | [14](14-development.md) |
 | `iris/branches.py` | branch workflow: one improvement branch, variants, auto-sync | [14](14-development.md) |

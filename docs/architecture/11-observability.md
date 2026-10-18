@@ -60,6 +60,7 @@ Every line has `schema`, `type`, `session`, `ts`.
 | `cancelled` | why the reply was abandoned (`resume`, `quit`, `leak`) |
 | `error` | LLM error text |
 | `tools` | `[{name, args, ok, secs, chars}]` |
+| `route` | who answered: `model`, `search`, `fastpath:<intent>`, `lookup:<intent>` (commands that return early write events instead: `list`, `pronounce`, `voice`, `rating` are the same names in the replay benchmark) |
 | `fastpath` | `time, date, calc, units, currency, timezone, wikipedia, weather` when answered by code |
 | `forced` | `search` (explicit request) or `recovered-search` (announced but not called) |
 | `false_claim` | kinds: `search, list, voice, pronounce, number` |
@@ -84,6 +85,7 @@ Lower is better unless marked ↑.
 | thinking | `reply_words_mean`, `format_violations_per_turn`, `truncated_rate`, `correction_rate`, `errors` | |
 | | `judge_mean` ↑, `judge_brevity`, `judge_honesty`, `eval_pass_rate` | night |
 | speaking | `underruns_per_turn`, `tts_rtf` ↑, `tts_roundtrip_wer` | |
+| routing | `route_counts`, `code_handled_rate` | how many answered turns were produced by exact code (fast path or lookups) rather than the model; informational (not tuned or flagged) |
 | interaction | `barge_in_rate`, `late_barge_in_rate` (after 60 % of a reply), `feedback_good` ↑, `feedback_bad` | |
 
 Targets live in pod.yaml `targets:` (`first_audio_s` 1.5, `premature_eos_rate` 0.03, `stt_wer` 0.10,

@@ -1,0 +1,273 @@
+# Replay cases (train). See iris/replay.py. Real utterances are redacted by hand.
+cases:
+- id: real-model-01
+  said: Hello iris who are you and what can you do?
+  expect:
+    route: model
+- id: real-model-02
+  said: Can you explain what is oop
+  expect:
+    route: model
+- id: real-model-04
+  said: explain oop in programming
+  expect:
+    route: model
+- id: real-model-06
+  said: How to factorize.
+  expect:
+    route: model
+- id: real-model-07
+  said: What is button?
+  expect:
+    route: model
+- id: real-model-08
+  said: Could you tell me about Once Upon a Broken Heart The Book?
+  expect:
+    route: model
+- id: real-model-09
+  said: is this book series related to the once upon a broken heart book series.
+  expect:
+    route: model
+- id: real-model-10
+  said: How to do quadratic equations?
+  expect:
+    route: model
+- id: real-model-11
+  said: What vehicles does Cheery sell in South Africa?
+  expect:
+    route: model
+- id: real-model-12
+  said: Hello, what is Cherry the core brand about?
+  expect:
+    route: model
+- id: real-model-16
+  said: If I like the ones upon a broken-haught book series, what is another good book series to read?
+  expect:
+    route: model
+- id: real-model-17
+  said: I have also read that series, what is another good one?
+  expect:
+    route: model
+- id: real-model-18
+  said: How often should I change my cat litter?
+  expect:
+    route: model
+- id: real-model-19
+  said: What tools you have access to at the moment and what your capabilities are besides answering questions.
+  expect:
+    route: model
+- id: real-model-20
+  said: explain about object-oriented programming.
+  expect:
+    route: model
+- id: real-model-21
+  said: Can you tell me about a movie that has come out in 2026?
+  expect:
+    route: model
+- id: real-model-23
+  said: Can that possibly be implemented or do you not have access to changing files?
+  expect:
+    route: model
+- id: real-model-24
+  said: I think you're stuck.
+  expect:
+    route: model
+- id: real-model-26
+  said: If you added to a list please.
+  expect:
+    route: model
+- id: real-model-27
+  said: Not future list.
+  expect:
+    route: model
+- id: real-model-28
+  said: But seems you're not updating the features or the improvements list.
+  expect:
+    route: model
+- id: real-model-30
+  said: Switch up the basics of computer science and then list what the topics are.
+  expect:
+    route: model
+- id: real-model-31
+  said: More depth into operating systems.
+  expect:
+    route: model
+- id: real-model-33
+  said: test match for what sport?
+  expect:
+    route: model
+- id: real-model-34
+  said: Hello who are you
+  expect:
+    route: model
+- id: real-model-35
+  said: Hello, what are you?
+  expect:
+    route: model
+- id: real-model-36
+  said: Hello, can you hear me?
+  expect:
+    route: model
+- id: real-model-37
+  said: Hello, what is the Iris on the human body?
+  expect:
+    route: model
+- id: real-model-38
+  said: Okay, tell me about your persona.
+  expect:
+    route: model
+- id: real-model-39
+  said: morning house going tell me about yourself
+  expect:
+    route: model
+- id: real-fast-calc-1
+  said: What is 2 squared times 4 squared?
+  expect:
+    route: fastpath:calc
+    reply_contains:
+    - '64'
+- id: real-fast-calc-3
+  said: What is 42 squared?
+  expect:
+    route: fastpath:calc
+    reply_contains:
+    - 1,764
+- id: real-lookup-weather
+  said: Please search up and tell me what the weather is in Cape Town currently.
+  expect:
+    route: lookup:weather
+- id: real-lookup-wiki-1
+  said: Perfect. Now I need another Wikipedia article based on the movie Spider-Man.
+  expect:
+    route: lookup:wikipedia
+- id: real-lookup-fx-1
+  said: You search what the current exchange it is from rands to U. S. dollars.
+  expect:
+    route: lookup:currency
+- id: real-lookup-fx-2
+  said: Can you search what is the exchange rate for usd to zar
+  expect:
+    route: lookup:currency
+- id: real-lookup-fx-3
+  said: What about yen to rand
+  expect:
+    route: lookup:currency
+- id: real-search-news-2
+  said: You search up news and tell me what's the latest news.
+  expect:
+    route: search
+- id: real-search-patch
+  said: You search the web for patch notes and the game's name is Hytale HYTALE.
+  expect:
+    route: search
+- id: real-list-future
+  said: To my future list the ability to see the progress of the search.
+  expect:
+    route: list
+    list: features
+    item: the ability to see the progress of the search
+- id: real-list-add-that
+  said: Yes, add that to the features list.
+  expect:
+    route: list
+  note: offline the fake model can't resolve 'that' and asks once; live it adds the item
+  history:
+  - - we should show a status while searching
+    - Good idea, a visible status would help.
+- id: real-list-or-incorrect
+  said: Or incorrect add that to improvements list.
+  expect:
+    route: list
+    reply_contains:
+    - What should I add
+- id: real-list-adding
+  said: Now, adding improvements, Uh, the voice tone is incorrect.
+  expect:
+    route: list
+- id: real-list-uh
+  said: Now, add to improvements, Uh, the voice tone is incorrect sometimes.
+  expect:
+    route: list
+    list: improvements
+    item: the voice tone is incorrect sometimes
+- id: real-voice-monotone
+  said: Your voice is a bit too monotone, like there's very little feeling when motioning it. And it's quite boring.
+  expect:
+    route: voice
+    knobs:
+      tts.expressiveness: 1
+- id: real-voice-enthusiasm
+  said: Can you add a little bit more enthusiasm to your voice? Certain words should be said longer so that it sounds
+    more human-like.
+  expect:
+    route: voice
+    knobs:
+      tts.expressiveness: 1
+- id: real-voice-less-monotone
+  said: Your voice is still seemingly monotone, you need to have more enthusiasm, less monotone, a lot less monotone
+  expect:
+    route: voice
+    knobs:
+      tts.expressiveness: 1
+- id: real-voice-expressiveness-max
+  said: They turn your expesiveness up to the max.
+  expect:
+    route: voice
+    knobs:
+      tts.expressiveness: 1
+  known_failing: true
+  note: '''expressiveness up/to the max'' is not understood'
+- id: real-voice-stick
+  said: Yeah, stick like this always. don't change.
+  expect:
+    route: voice
+    steady: true
+  known_failing: true
+  note: '''stick like this'', ''don''t change'' not understood'
+- id: real-voice-options-question
+  said: Um, things can you change that will make the, uh, the voice, the remote space a little different.
+  expect:
+    route: model
+  note: asks what could change; not an order
+- id: real-pron-cuban-wrong
+  said: The word Cuban is pronounced wrong.
+  expect:
+    route: model
+    no_respell: true
+  note: 'a complaint, not a lesson: must not teach ''Cuban'' = ''wrong'''
+- id: real-pron-wrong-2
+  said: No, you pronounce it wrong. Do you sing K-U, saying K-A-M-N, but that's incorrect.
+  expect:
+    route: model
+    no_respell: true
+- id: real-pron-ask
+  said: pronounce the word cumin
+  expect:
+    route: model
+    no_respell: true
+- id: real-pron-also-read
+  said: also read that series what is another good one.
+  expect:
+    route: model
+    no_respell: true
+- id: real-rating-why
+  said: good response you explained it clearly and correctly pronounced.
+  expect:
+    route: rating
+    rating: good
+  turns: 1
+- id: real-garble
+  said: Okay, no, but hi.
+  expect:
+    route: garble
+    reply_contains:
+    - Did you say
+  note: '''level higher'' heard as this (session 174811)'
+  stt:
+    avg_logprob: -1.3
+- id: real-garble-confident
+  said: Okay, no, but hi.
+  expect:
+    route: model
+  stt:
+    avg_logprob: -0.3

@@ -39,6 +39,7 @@ Global options: `--agent NAME`, `-v`.
 | `doctor` | check every part (`--full` loads every model once) |
 | `metrics` | metrics from recent traces (`--days`) |
 | `evals` | run the eval suite (`--judge`, `--golden`, `--model`) |
+| `replay` | the replay benchmark (`--split train|holdout|all`, `--live`, `--only ID`, `--json`, `-V`); `replay split SRC` writes the train and holdout halves |
 | `set knob|model NAME VALUE` | change a setting yourself (committed) |
 | `persona list | show [N] | use N | add N --file F` | personas |
 | `agent list | new NAME [--persona F]` | agents |
@@ -66,6 +67,7 @@ pointing at a closed port, `IRIS_OLLAMA=external`, no systemd, no notifications,
 | `test_self.py`, `test_loops.py`, `test_local_loop.py` | self store, tiers, tuner, sleep, night, findings |
 | `test_session_replay.py` | **real utterances from real sessions** as regression cases |
 | `test_branches.py` | the branch workflow with temporary git repos |
+| `test_replay.py` | the replay benchmark itself, and that every repo case passes (known failures stay failing until fixed) |
 | `test_docs.py` | the documentation stays complete and links stay valid |
 
 Rule: every behaviour fix gets a test built from the real phrase that failed (`test_session_replay.py`).

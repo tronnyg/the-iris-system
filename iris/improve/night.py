@@ -427,7 +427,7 @@ class Night:
                 w = worse_by(k, m[k], prev[k])
             except Exception:
                 continue
-            if w and w > tol * 2 and k not in ("turns", "voice_turns", "errors"):
+            if w and w > tol * 2 and k not in ("turns", "voice_turns", "errors", "code_handled_rate"):
                 add("perf" if "audio" in k or "_s" in k else "intelligence", "metric-regression",
                     f"{k} got {w:.0%} worse since the last night run", [f"{prev[k]} -> {m[k]}"])
         ev = (self.r["stages"].get("evals") or {}).get("result") or {}

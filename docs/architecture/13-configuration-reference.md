@@ -150,6 +150,7 @@ Changes apply when the instance restarts: `iris ollama restart`.
 | `IRIS_HEADSET` | `1` / `0` overrides headset mode |
 | `IRIS_MIC` | input device index or name part |
 | `IRIS_SEARXNG` | your SearXNG URL for web search |
+| `IRIS_REPLAY_HOLDOUT` | folder of the held-out replay cases (default `$IRIS_HOME/replay/holdout`) |
 | `HF_HOME`, `HF_HUB_OFFLINE` | Hugging Face cache and offline mode (Smart Turn, Whisper, embeddings) |
 | `XDG_RUNTIME_DIR` | where the session control socket lives |
 | `XDG_CONFIG_HOME` | where systemd user units are written |

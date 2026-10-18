@@ -192,3 +192,49 @@ Evolutionary search (OpenEvolve, Darwin Gödel Machine) is deliberately left for
 with a fast automatic score (for example the end-of-turn function or the splitter, scored by replayed traces). Its
 winner would go through the same gate and approval path as everything else. See also
 [../plans/smarter-through-code.md](../plans/smarter-through-code.md).
+
+## 11. The replay benchmark
+
+Source: `iris/replay.py`, `evals/replay/*.yaml`, `tests/test_replay.py`. Decision:
+[ADR-0032](../adr/0032-replay-benchmark-as-the-gate.md).
+
+The eval suite above grades *what the model says*. The replay benchmark grades *what the code does with what you
+said*: which path answers (`route`), what lands on a list, which knob moves, whether a pronunciation is wrongly
+taught. Every case is a real utterance from your sessions (redacted by hand) or a deliberate near-miss, plus what must
+happen:
+
+```yaml
+- id: real-pron-cuban-wrong
+  said: "The word Cuban is pronounced wrong."
+  expect: {route: model, no_respell: true}      # a complaint, not a lesson
+```
+
+```mermaid
+flowchart LR
+    CASES["evals/replay/*.yaml<br/>train cases (in the repo)"] --> RUN
+    HOLD["$IRIS_HOME/replay/holdout/*.yaml<br/>holdout: a stable 1 in 5 by id,<br/>kept OUT of the repo"] --> RUN
+    RUN["iris replay<br/>per case: throwaway copy of a fresh self store,<br/>asr_fix, Conversation.respond"] --> CHK["checks: route · list item · knob direction ·<br/>respelling · rating · reply text · memory fact"]
+    CHK --> OUT["pass / FAIL / known / FIXED<br/>+ pass rate per route"]
+    OUT --> GATE["pytest (train) · night / autopilot referee (holdout)"]
+    LIVE["--live: real model and tools on a scratch copy of your agent"] -.-> RUN
+```
+
+* **Routes:** `list | voice | pronounce | rating | garble | fastpath:<intent> | lookup:<intent> | search | model`. Every
+  turn record and every returned `TurnResult` carries it, so the benchmark, the metrics (`code_handled_rate`,
+  `route_counts`) and a future router all read the same thing.
+* **Offline (default, in the test suite, ~3 s):** a fake LLM, `IRIS_OFFLINE=1`, a fresh copy of a template self store per case,
+  nothing written to your home. It scores everything code decides. **Live (`--live`, uses the GPU):** the real model and
+  tools on a scratch copy of your agent; adds reply checks (`no_false_claim`, `max_words`).
+* **`known_failing: true`** marks a real failure that is an improvement target. It is reported, not an error; the moment
+  it passes, the test says so and the flag must be removed. The first baseline (2026-10-18): 177 cases, 174 pass, 3 known
+  failures ("expressiveness up to the max", "stick like this, don't change", "slightly, slightly deeper" inside a long request).
+* **Train / holdout:** cases whose id hashes into 1 in 5 are held out and live outside the repo, so whoever improves the
+  code (a person or the autopilot) can't tune to them; the night loop and the autopilot's referee score them. Add cases by
+  editing the YAML source and re-running `iris replay split SRC` (adding a case never reshuffles the others).
+* **Live baseline (2026-10-18, real gemma4 vision-only + tools, 5 min):** 177 cases, 174 pass, the same 3 known failures; where the
+  real model decides it can differ from offline (it searches by itself on open questions, which still counts as `model`; it resolves
+  "add that to the list" where the fake model has to ask).
+* **What it already found** (at its first run): "the train was too fast" and "my cat is too loud at night" changed the
+  voice settings; "The word Cuban is pronounced wrong" would have taught "Cuban" the pronunciation "wrong". Both fixed.
+* **Adding a case:** when something goes wrong in a real session, add the phrase with what should have happened
+  (redact names), run `iris replay`, see it fail, fix the code, see it pass.
