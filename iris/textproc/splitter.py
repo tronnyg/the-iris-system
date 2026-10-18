@@ -1,7 +1,9 @@
 """Cut streaming LLM text into speakable chunks.
 
 The first sentence goes to the TTS as soon as it is complete (lowest time to first
-audio). Later sentences are merged until `min_chunk_chars`, which keeps prosody
+audio); a long first sentence is cut even earlier, at its first clause break ("Well, the
+short answer is yes, but ...") once `first_clause_chars` have arrived, so the voice starts
+while the model is still writing the rest. Later sentences are merged until `min_chunk_chars`, which keeps prosody
 natural and avoids per-chunk overhead. Very long run-on text is cut at a comma.
 """
 
@@ -18,7 +20,8 @@ _END_RE = re.compile(r"[.!?…]+[\"')\]]*(?=\s)|\n+")
 
 class SentenceSplitter:
     def __init__(self, min_chunk_chars: int = 60, first_chunk_min_chars: int = 0,
-                 max_chunk_chars: int = 240):
+                 max_chunk_chars: int = 240, first_clause_chars: int = 0):
+        self.first_clause = first_clause_chars
         self.min_chunk = min_chunk_chars
         self.first_min = first_chunk_min_chars
         self.max_chunk = max_chunk_chars
@@ -61,9 +64,26 @@ class SentenceSplitter:
             self.buf = self.buf[cut + 1:]
         return out
 
+    _CLAUSE_RE = re.compile(r"(?:[,;:](?=\s)|\s[—–-]\s)")
+
+    def _early_clause(self) -> str | None:
+        """The first clause of a long first sentence, once it is clearly a clause."""
+        if not self.first_clause or self.emitted or self.pending or "[" in self.buf:
+            return None
+        for m in self._CLAUSE_RE.finditer(self.buf):
+            head = self.buf[:m.end()].strip()
+            if len(head) >= self.first_clause and len(head.split()) >= 4:
+                self.buf = self.buf[m.end():]
+                return head
+        return None
+
     def feed(self, delta: str) -> list[str]:
         self.buf += delta
         chunks = []
+        early = self._early_clause()
+        if early:
+            chunks.append(early)
+            self.emitted += 1
         for s in self._take_sentences():
             if self._only_tags(s):
                 # a lone cue like "[pause]" belongs with the next sentence

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import paths
-from .util import similarity, words
+from .util import log, similarity, words
 
 USER = "memory/user.md"
 LESSONS = "memory/lessons.md"
@@ -45,6 +45,59 @@ class Delta:
 
     def empty(self) -> bool:
         return not (self.user_add or self.user_remove or self.lessons_add or self.lessons_remove)
+
+
+# -- semantic recall ------------------------------------------------------------------------
+# A small sentence-embedding model (bge-small, ONNX via fastembed) on the CPU: ~5 ms per
+# query, and it never competes with the chat model for the GPU. Loaded in the background
+# at session start; until it's ready (or if it's not installed) recall is keyword-only.
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+SEM_MIN = 0.6               # cosine similarity that counts as "about the same thing"
+_emb = {"model": None, "state": "idle", "vecs": {}}
+
+
+def warm_semantic() -> None:
+    """Load the embedding model in a background thread (no-op if unavailable)."""
+    import threading
+    if _emb["state"] != "idle":
+        return
+    _emb["state"] = "loading"
+
+    def load():
+        try:
+            from fastembed import TextEmbedding
+            _emb["model"] = TextEmbedding(EMBED_MODEL)
+            _emb["state"] = "ready"
+        except Exception as e:
+            log.info("semantic recall unavailable (%s); using keyword recall", e)
+            _emb["state"] = "failed"
+
+    threading.Thread(target=load, daemon=True).start()
+
+
+def semantic_recall(eps: list[tuple[str, str]], query: str, k: int = 2) -> list[str]:
+    m = _emb["model"]
+    if m is None:
+        return []
+    try:
+        import hashlib
+        import numpy as np
+        missing = [(n, tx) for n, tx in eps if (n, hashlib.md5(tx.encode()).hexdigest()) not in _emb["vecs"]]
+        if missing:
+            for (n, tx), v in zip(missing, m.embed([tx for _, tx in missing])):
+                _emb["vecs"][(n, hashlib.md5(tx.encode()).hexdigest())] = np.asarray(v, dtype=np.float32)
+        q = np.asarray(next(iter(m.query_embed([query]))), dtype=np.float32)
+        scored = []
+        for n, tx in eps:
+            v = _emb["vecs"][(n, hashlib.md5(tx.encode()).hexdigest())]
+            s = float(v @ q / ((np.linalg.norm(v) * np.linalg.norm(q)) or 1.0))
+            if s >= SEM_MIN:
+                scored.append((s, n, tx))
+        scored.sort(reverse=True)
+        return [f"[{n}] {tx.strip()}" for _, n, tx in scored[:k]]
+    except Exception as e:
+        log.warning("semantic recall failed: %s", e)
+        return []
 
 
 class Memory:
@@ -83,8 +136,16 @@ class Memory:
         return "\n\n".join(parts)
 
     def recall(self, query: str, k: int = 2, min_score: float = 1.0) -> list[str]:
-        """BM25 over episode summaries. Cheap, dependency-free and good enough at this scale."""
+        """Past episodes relevant to `query`: semantic matches first (meaning, not words:
+        "that mountain walk" finds the hiking trip), then BM25 keyword matches."""
         eps = self.episodes()
+        sem = semantic_recall(eps, query, k) if eps and query.strip() else []
+        lex = self._bm25(eps, query, k, min_score)
+        out = list(dict.fromkeys(sem + lex))
+        return out[:k]
+
+    def _bm25(self, eps, query: str, k: int, min_score: float) -> list[str]:
+        """BM25 over episode summaries. Cheap, dependency-free and good enough at this scale."""
         if not eps or not query.strip():
             return []
         docs = [words(t) for _, t in eps]

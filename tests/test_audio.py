@@ -148,3 +148,51 @@ def test_silero_engine_decides_speech_by_probability():
     for f in frames(np.concatenate([noise(0.5), tone(1.0), noise(0.8)])):
         events += v.process(f)
     assert [e[0] for e in events] == ["start", "end"] and events[1][1]["reason"] == "silence"
+
+
+def test_trim_silence_keeps_speech_and_padding():
+    from iris.stt import trim_silence
+    sig = np.concatenate([noise(1.5, amp=0.001), tone(1.0), noise(2.0, amp=0.001)])
+    out = trim_silence(sig)
+    assert 1.2 * 16000 <= len(out) <= 1.45 * 16000          # 1 s of speech + ~0.15 s padding each side
+    quiet_talker = tone(1.0, amp=0.01)                        # soft speech is relative to its own peak
+    assert len(trim_silence(quiet_talker)) == len(quiet_talker)
+
+
+def test_hotwords_come_from_name_pod_and_memory():
+    from iris.memory import Delta, Memory
+    from iris.talk import Session
+    Memory().apply(Delta(["The user's sister is called Thandiwe.", "The user works at Shopify."], [], [], []))
+    s = Session(mode="ptt", speak=False, listen=False, wake=False)
+    s.s.pod["stt"] = {"hotwords": ["Kokoro"]}
+    hw = s.hotwords()
+    assert hw.startswith("IRIS") and "Kokoro" in hw and "Thandiwe" in hw and "Shopify" in hw and "The " not in hw
+
+
+def test_moonshine_engine_is_used_for_moonshine_names(monkeypatch):
+    from iris import stt as stt_mod
+
+    class FakeModel:
+        def generate(self, audio):
+            assert audio.ndim == 2
+            return [[1, 2, 3]]
+
+    class FakeTok:
+        def decode_batch(self, toks):
+            return [" Hello there. "]
+
+    s = stt_mod.STT("moonshine/base")
+    monkeypatch.setitem(stt_mod.STT._models, ("moonshine/base", "cpu"), (FakeModel(), FakeTok()))
+    tr = s.transcribe(tone(1.0))
+    assert tr.text == "Hello there." and tr.model == "moonshine/base" and not tr.hallucination
+
+
+def test_night_picks_the_fastest_equally_accurate_recogniser():
+    from iris.config import Settings
+    from iris.improve.tuner import choose_stt
+    s = Settings.load()
+    s.pod["models"]["stt"] = {"value": "base.en", "choices": ["tiny.en", "base.en", "moonshine/base"], "tier": "auto"}
+    ev = {"tiny.en": {"wer": 0.12, "secs_p50": 0.2}, "base.en": {"wer": 0.05, "secs_p50": 0.4},
+          "moonshine/base": {"wer": 0.06, "secs_p50": 0.1}}
+    ch = choose_stt(ev, s)
+    assert ch and ch["to"] == "moonshine/base"

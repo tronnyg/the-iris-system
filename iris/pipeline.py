@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import lists, ollama_ctl, selfstore
+from . import fastpath, lists, ollama_ctl, selfstore
 from .config import Settings
 from .llm import Cancel, LLMError, LLMStats, Ollama
 from .memory import Delta, Memory, forget_command, remember_command
@@ -129,6 +129,25 @@ class LeakGuard:
         if not done:
             return "", None
         return self.lead, "clean"
+
+
+class _Canned:
+    """Stands in for the LLM for one turn: streams a ready answer (the fast path)."""
+
+    def __init__(self, text: str, model: str):
+        self.text, self.model = text, model
+
+    def stream(self, messages, options=None, cancel=None, stats=None, think=False, fmt=None, **kw):
+        if stats is not None:
+            stats.model, stats.ttft_s = self.model, 0.0
+        for i in range(0, len(self.text), 12):
+            if cancel is not None and cancel.is_set():
+                if stats is not None:
+                    stats.done_reason = "cancelled"
+                return
+            yield self.text[i:i + 12]
+        if stats is not None:
+            stats.done_reason, stats.tokens = "stop", len(self.text.split())
 
 
 @dataclass
@@ -279,17 +298,20 @@ class Conversation:
             live = self.live = _Live()
 
         s = self.s
+        fast = fastpath.answer(user_text) if (s.pod.get("fastpath") or {}).get("enabled", True) else None
+        llm = _Canned(fast[1], self.llm.model) if fast else self.llm
         history_turns = int(s.knob("llm.history_turns", 12))
         messages = self.memory.build_messages(s.system_prompt, self.context(history_turns), user_text)
         # today's date (stable all day, so the prompt cache survives); tools for anything newer
         import datetime as _dt
         extra = [_dt.date.today().strftime("Today is %A, %d %B %Y.")]
-        native = self.tools_native()
-        if self.tools and not native:
+        native = False if fast else self.tools_native()
+        if self.tools and not native and not fast:
             extra.append(tool_mod.text_protocol(self.tools))
         messages[0] = {**messages[0], "content": messages[0]["content"] + "\n\n" + "\n\n".join(extra)}
         options = llm_options(s, self.llm.model)
-        splitter = SentenceSplitter(min_chunk_chars=int(s.knob("splitter.min_chunk_chars", 60)))
+        splitter = SentenceSplitter(min_chunk_chars=int(s.knob("splitter.min_chunk_chars", 60)),
+                                    first_clause_chars=int(s.knob("splitter.first_clause_chars", 30)))
         think = ThinkFilter()
         report = Report()
         stats = LLMStats()
@@ -357,13 +379,13 @@ class Conversation:
             for round_no in range(3):                 # at most two tool rounds, then an answer
                 calls: list = []
                 round_raw: list[str] = []
-                hold = bool(self.tools) and not native and round_no < 2   # text protocol: <<search: ...>>
+                hold = bool(self.tools) and not native and not fast and round_no < 2   # text protocol: <<search: ...>>
                 held = ""
                 kw = {}
                 if native and round_no < 2:
                     kw = {"tools": [t.schema() for t in self.tools.values()], "tool_calls": calls}
-                guard = LeakGuard() if round_no == 0 else None
-                for delta in self.llm.stream(msgs, options=options, cancel=live.cancel, stats=stats, **kw):
+                guard = LeakGuard() if round_no == 0 and not fast else None
+                for delta in llm.stream(msgs, options=options, cancel=live.cancel, stats=stats, **kw):
                     if timing.get("first_token") is None:
                         timing["first_token"] = time.perf_counter() - t0
                     if guard is not None:
@@ -516,6 +538,7 @@ class Conversation:
             "timing": {k: (round(v, 3) if isinstance(v, float) else v) for k, v in timing.items()},
             "playback": playback, "barge_in": barge, "cancelled": cancelled, "error": error,
             "tools": [tr.as_dict() for tr in tool_runs] or None,
+            "fastpath": fast[0] if fast else None,
             "config": {"self": selfstore.head(), "knobs": s.knobs(),
                        "persona": s.persona_name,
                        "models": {"llm": self.llm.model, "stt": (stt or {}).get("model"), "tts": engine or None}},

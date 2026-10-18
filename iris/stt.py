@@ -62,9 +62,19 @@ class STT:
         self.compute_type = compute_type
         self.threads = threads or max(1, (os.cpu_count() or 4) // 2)
 
+    @property
+    def moonshine(self) -> bool:
+        return self.name.startswith("moonshine/")
+
     def _model(self):
         key = (self.name, self.device)
         with STT._lock:
+            if key not in STT._models and self.moonshine:
+                # Moonshine (ONNX, CPU): encodes only the audio actually spoken, so a short
+                # command takes ~100 ms instead of Whisper's fixed 30 s window (~400 ms here)
+                import moonshine_onnx
+                STT._models[key] = (moonshine_onnx.MoonshineOnnxModel(model_name=self.name),
+                                    moonshine_onnx.load_tokenizer())
             if key not in STT._models:
                 from faster_whisper import WhisperModel  # heavy import, only when needed
                 STT._models[key] = WhisperModel(self.name, device=self.device,
@@ -78,13 +88,25 @@ class STT:
         self._model()
         return time.perf_counter() - t0
 
-    def transcribe(self, audio: np.ndarray, beam_size: int = 1, prompt: str | None = None) -> Transcript:
+    def transcribe(self, audio: np.ndarray, beam_size: int = 1, prompt: str | None = None,
+                   hotwords: str | None = None, trim: bool = True) -> Transcript:
         audio = np.asarray(audio, dtype=np.float32).reshape(-1)
         t0 = time.perf_counter()
+        if trim:
+            audio = trim_silence(audio)
+        if self.moonshine:
+            model, tok = self._model()
+            text = tok.decode_batch(model.generate(audio[None, :]))[0].strip() if len(audio) >= 1600 else ""
+            tr = Transcript(text=text, model=self.name, secs=time.perf_counter() - t0, audio_s=len(audio) / SAMPLE_RATE)
+            tr.hallucination = text.lower().strip() in HALLUCINATIONS
+            return tr
         segments, _info = self._model().transcribe(
             audio, language="en", beam_size=beam_size, vad_filter=False,
             condition_on_previous_text=False, without_timestamps=True,
-            initial_prompt=prompt,
+            initial_prompt=prompt, hotwords=hotwords or None,
+            # one retry at most: the default re-decodes up to five more times at rising
+            # temperatures when a transcript looks odd, which multiplies latency on noise
+            temperature=(0.0, 0.4),
         )
         segs = list(segments)
         text = " ".join(s.text.strip() for s in segs).strip()
@@ -104,6 +126,23 @@ class STT:
     def unload_all(cls) -> None:
         with cls._lock:
             cls._models.clear()
+
+
+def trim_silence(audio: np.ndarray, pad_s: float = 0.15, frame_s: float = 0.02, rel_db: float = 35.0) -> np.ndarray:
+    """Drop leading/trailing near-silence (keeping `pad_s`): less audio = faster Whisper,
+    and fewer hallucinations on silent tails. Quiet audio relative to its own peak only,
+    so a soft speaker is never cut."""
+    n = int(SAMPLE_RATE * frame_s)
+    if len(audio) < n * 10:
+        return audio
+    frames = audio[: len(audio) // n * n].reshape(-1, n)
+    db = 20 * np.log10(np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1)) + 1e-9)
+    loud = np.nonzero(db > db.max() - rel_db)[0]
+    if not len(loud):
+        return audio
+    pad = int(pad_s / frame_s)
+    a, b = max(0, loud[0] - pad), min(len(frames), loud[-1] + 1 + pad)
+    return audio[a * n: b * n] if (b - a) * n >= SAMPLE_RATE * 0.3 else audio
 
 
 def load_wav_16k(path) -> np.ndarray:

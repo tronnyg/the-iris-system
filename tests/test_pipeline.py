@@ -151,7 +151,7 @@ def test_leaked_reasoning_is_never_spoken_and_a_clean_model_takes_over(fake_llm)
     llm = TwoModels(model="leaky:4b")
     said = []
     c = Conversation(Settings.load(), llm, None, None, TraceWriter(), Memory(), on_text=said.append)
-    r = c.respond("what is two plus two?", speak=False)
+    r = c.respond("explain why two plus two makes four", speak=False)
     assert r.spoken == "The answer is four." and said == ["The answer is four."]
     assert llm.calls == ["leaky:4b", "clean:4b"] and llm.model == "clean:4b"
     assert model_traits("leaky:4b")["leaks"] and r.record["turn"] == 1 and len(turns()) == 1
@@ -176,5 +176,5 @@ def test_normal_replies_pass_the_leak_guard(fake_llm):
         g = LeakGuard()
         verdicts = [g.feed(text[i:i + 4])[1] for i in range(0, len(text), 4)]
         assert "leak" not in verdicts, text
-    r = Conversation(Settings.load(), fake_llm("Four."), None, None, TraceWriter(), Memory()).respond("2+2?", speak=False)
+    r = Conversation(Settings.load(), fake_llm("Four."), None, None, TraceWriter(), Memory()).respond("and the sum?", speak=False)
     assert r.spoken == "Four."

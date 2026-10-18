@@ -62,7 +62,7 @@ ratings, so lessons that don't help get pruned.
 
 ## Later
 
-- **Streaming STT.** Moonshine v2 streaming reports ~50-165 ms latency on CPU vs seconds for
+- **Streaming STT.** (Moonshine non-streaming is done, see Done.) Moonshine v2 streaming reports ~50-165 ms latency on CPU vs seconds for
   Whisper small (vendor numbers). Only if `stt_s_p50` is a top bottleneck in the findings.
   Parakeet TDT is fast in batch but weaker for CPU streaming.
   [Moonshine v2 paper](https://arxiv.org/html/2602.12241v1) · [comparison](https://www.assemblyai.com/blog/top-open-source-stt-options-for-voice-applications)
@@ -78,7 +78,27 @@ ratings, so lessons that don't help get pruned.
   caching (already designed for: stable system prompt, block-trimmed history) matters more for
   first audio. Revisit only if tok/s limits long replies.
 
+## Next ideas (from the 2026-10-18 session)
+
+- Moonshine *streaming*: transcribe while the user is still speaking, so the transcript is
+  ready the moment Smart Turn ends the turn (another ~100 ms off first sound).
+- Speculative reply: start the LLM on the partial transcript during the end-of-turn check
+  and keep it if the final transcript matches.
+- Fast path for more exact intents: unit conversion, timers (needs a timer tool), "repeat
+  that", "say that again slower".
+- Rolling conversation summary instead of dropping the older half of the history.
+
 ## Done
+
+- 2026-10-18 (night session, branch auto-improvements):
+  - **Fast path**: time, date and arithmetic answered instantly and exactly, no LLM.
+  - **Speak sooner**: a long first sentence starts playing at its first clause break.
+  - **Moonshine STT**: base ~100 ms vs Whisper base.en ~400 ms per utterance on this CPU
+    (Whisper's encoder always processes a 30 s window); the night loop now picks the fastest
+    recogniser within 2 points of the best on your own voice.
+  - **Listening**: Whisper hotwords (names from memory), decode retries capped, silence trimmed.
+  - **Semantic memory recall** (bge-small on the CPU, ~5 ms/query) ahead of BM25.
+  - **Speaking**: units, symbols, abbreviations, emails and URLs normalised for every voice.
 
 - 2026-10-18: **Smart Turn v3.2** end-of-turn model + **Silero** speech detection (`iris/turn.py`,
   pod.yaml `vad:`). Measured on Kokoro speech: finished questions end after ~260 ms of silence
