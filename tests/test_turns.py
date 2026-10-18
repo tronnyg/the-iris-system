@@ -169,3 +169,29 @@ def test_reflection_drops_lessons_that_make_the_assistant_promise_things(fake_ll
         "When the user asks a factual question, answer in the first sentence."], "summary": "x"})
     delta, _ = sleep.reflect([{"user_text": "hi", "reply_spoken": "hello"}], Memory(), fake_llm(reply))
     assert delta.lessons_add == ["When the user asks a factual question, answer in the first sentence."]
+
+
+def test_a_recogniser_that_cannot_load_falls_back_to_whisper(monkeypatch):
+    from iris import stt as stt_mod
+    from iris.talk import Session
+    s = Session(mode="ptt", speak=False, listen=True, wake=False)
+    s.s.pod["models"]["stt"]["value"] = "moonshine/base"
+    loaded = []
+
+    def fake_load(self):
+        loaded.append(self.name)
+        if self.name.startswith("moonshine"):
+            raise RuntimeError("model files missing")
+        return 0.1
+
+    monkeypatch.setattr(stt_mod.STT, "load", fake_load)
+    monkeypatch.setattr("iris.talk.mic_device", lambda *a, **k: None)
+    monkeypatch.setattr("iris.talk.mic_name", lambda d: "fake")
+    monkeypatch.setattr("iris.talk.Recorder", lambda *a, **k: type("R", (), {"start": lambda self: None})())
+    monkeypatch.setattr(s.llm, "available", lambda: True)
+    monkeypatch.setattr(s.llm, "has_model", lambda *a: True)
+    monkeypatch.setattr(s.llm, "warm", lambda *a, **k: None)
+    monkeypatch.setattr(s.llm, "supports_tools", lambda: False)
+    s.boot()
+    assert loaded == ["moonshine/base", "base.en"] and s.stt.name == "base.en"
+    s.running = False

@@ -123,7 +123,14 @@ class Session:
             self.player.start()
         if self.listen:
             self.stt = STT(self.s.model("stt", "base.en"))
-            print(f"  ears: whisper {self.stt.name} loaded in {self.stt.load():.1f}s (CPU)", flush=True)
+            try:
+                secs = self.stt.load()
+            except Exception as e:                       # e.g. Moonshine not installed or not downloaded
+                log.warning("speech recogniser %s failed to load (%s); using base.en", self.stt.name, e)
+                self.stt = STT("base.en")
+                secs = self.stt.load()
+            kind = "moonshine" if self.stt.moonshine else "whisper"
+            print(f"  ears: {kind} {self.stt.name} loaded in {secs:.1f}s (CPU)", flush=True)
             vad = vad_config(self.s)
             device = mic_device(self.mic, self.s)
             if self.headset is None:
