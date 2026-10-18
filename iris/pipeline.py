@@ -83,6 +83,54 @@ def llm_options(s: Settings, model: str) -> dict:
     return opts
 
 
+# Leaked chain of thought: some models (always-thinking builds) ignore think=false and
+# write their reasoning as the reply. It starts like this, almost never like an answer.
+_LEAK_RE = re.compile(r"^\W*(?:(?:okay|ok|alright|hmm+|so|well)\b[\s,.!]*)*"
+                      r"(?:let me (?:think|see|figure|recall)|let's see|i need to|i should|we (?:are|need|have) to|"
+                      r"first,? (?:i|let)|the user)", re.I)
+_LEAK_ANYWHERE_RE = re.compile(r"\bthe user(?:'s)?\b", re.I)
+LEAK_NOTICE = ("My language model is thinking out loud instead of answering, and no other model is "
+               "installed to fall back on. Please switch me to a non-thinking model.")
+
+
+def _traits_path():
+    from . import paths
+    return paths.state_dir() / "model_traits.json"
+
+
+def model_traits(model: str) -> dict:
+    from .util import read_json
+    return dict((read_json(_traits_path(), {}) or {}).get(model) or {})
+
+
+def set_model_trait(model: str, **kv) -> None:
+    from .util import read_json, write_json
+    d = read_json(_traits_path(), {}) or {}
+    d[model] = {**(d.get(model) or {}), **kv, "checked": time.time()}
+    write_json(_traits_path(), d)
+
+
+class LeakGuard:
+    """Holds the first sentence of a reply and says whether it is leaked reasoning."""
+
+    def __init__(self):
+        self.lead = ""
+
+    def feed(self, delta: str) -> tuple[str, str | None]:
+        """(text to release, verdict): verdict None = still holding, "clean", or "leak"."""
+        self.lead += delta
+        if self.lead.lstrip().startswith("<"):        # a tool call (<<search: ...>>) or a <think> block
+            return self.lead, "clean"
+        first = re.split(r"(?<=[.!?])\s", self.lead.lstrip(), maxsplit=1)
+        done = len(first) > 1 or len(self.lead) >= 160
+        head = first[0]
+        if _LEAK_RE.match(head) or (_LEAK_ANYWHERE_RE.search(head) and done):
+            return "", "leak"
+        if not done:
+            return "", None
+        return self.lead, "clean"
+
+
 @dataclass
 class TurnResult:
     record: dict
@@ -121,6 +169,9 @@ class Conversation:
         self.on_delta = on_delta or (lambda d: None)          # raw LLM text as it streams (for a UI)
         self.on_turn = on_turn or (lambda rec: None)          # the finished turn record
         self.on_interrupt = on_interrupt or (lambda reason: None)
+        self.fallbacks_tried: set[str] = set()
+        if model_traits(getattr(llm, "model", "")).get("leaks"):
+            self._switch_model(reason="known to leak its reasoning")
         self.commit_memory = commit_memory
         self.history: list[dict] = []
         self.ctx_start = 0               # first history message still sent to the LLM
@@ -298,6 +349,7 @@ class Conversation:
 
         raw = []
         error = None
+        leaked = False
         tool_runs: list = []
         try:
             msgs = list(messages)
@@ -310,9 +362,18 @@ class Conversation:
                 kw = {}
                 if native and round_no < 2:
                     kw = {"tools": [t.schema() for t in self.tools.values()], "tool_calls": calls}
+                guard = LeakGuard() if round_no == 0 else None
                 for delta in self.llm.stream(msgs, options=options, cancel=live.cancel, stats=stats, **kw):
                     if timing.get("first_token") is None:
                         timing["first_token"] = time.perf_counter() - t0
+                    if guard is not None:
+                        out, verdict = guard.feed(delta)
+                        if verdict == "leak":
+                            leaked = True
+                            break
+                        if verdict is None:
+                            continue
+                        delta, guard = out, None
                     raw.append(delta)
                     round_raw.append(delta)
                     self.on_delta(delta)
@@ -346,7 +407,7 @@ class Conversation:
                     else:                              # looked like a tool call but wasn't: say it
                         for c in splitter.feed(think.feed(held)):
                             emit(c)
-                if not found or live.cancel.is_set():
+                if leaked or not found or live.cancel.is_set():
                     break
                 for c in splitter.flush():             # anything said before the tool call
                     emit(c)
@@ -368,7 +429,10 @@ class Conversation:
                     msgs.append({"role": "assistant", "content": held.strip()})
                     msgs.append({"role": "user", "content": "Tool result:\n" + "\n\n".join(tr.result for tr in results)
                                  + "\n\nNow answer my previous message using this. Don't mention the tool."})
-            if not live.cancel.is_set():
+            if guard is not None and not leaked and guard.lead:      # short reply: never reached a verdict
+                for c in splitter.feed(think.feed(guard.lead)):
+                    emit(c)
+            if not live.cancel.is_set() and not leaked:
                 tail = splitter.feed(think.flush()) + splitter.flush()
                 if stats.done_reason == "length":
                     # the reply hit llm.num_predict: never stop mid-sentence, offer to go on
@@ -382,6 +446,33 @@ class Conversation:
             log.error("LLM error: %s", e)
             emit("Sorry, my language model isn't responding.")
         report.think += think.dropped
+        if leaked and not live.cancel.is_set():
+            # the model wrote its reasoning as the answer (nothing has been spoken): never use it
+            # again, fall back to a clean model for this session and answer the turn again
+            bad = self.llm.model
+            log.warning("%s leaked its reasoning into the reply", bad)
+            set_model_trait(bad, leaks=True)
+            try:
+                from .improve import insights
+                insights.add("models", "failure-cluster", f"{bad} speaks its reasoning: it ignores think=false",
+                             [f"caught live: {''.join(raw)[:200]!r}",
+                              "an always-thinking build: use an instruct / non-thinking model "
+                              "(iris set model llm <model>), or set models.llm_fallback in pod.yaml"],
+                             source="pipeline", confidence="high")
+            except Exception:
+                pass
+            if voiced:
+                q.put(None)
+                worker.join()
+                self.player.end_reply()
+            with self.lock:
+                self.turn_no -= 1
+                self.live = None
+            if not self._switch_model(reason="leaked its reasoning"):
+                self._say_simple(LEAK_NOTICE, speak)
+                return TurnResult(record={}, spoken=LEAK_NOTICE, cancelled="leak")
+            return self.respond(user_text, mode=mode, t_end=t_end, stt=stt, endpoint=endpoint,
+                                audio_in=audio_in, stt_done_s=stt_done_s, speak=speak)
 
         if voiced:
             q.put(None)
@@ -436,6 +527,33 @@ class Conversation:
         except Exception as e:
             log.warning("on_turn callback failed: %s", e)
         return TurnResult(record=rec, spoken=spoken, cancelled=cancelled)
+
+    def _switch_model(self, reason: str) -> bool:
+        """Use another installed model for the rest of this conversation.
+
+        Order: pod.yaml models.llm_fallback, then installed models already checked clean,
+        then any other installed model (the guard checks it on its first reply)."""
+        cur = self.llm.model
+        self.fallbacks_tried.add(cur)
+        try:
+            installed = list(self.llm.installed_models())
+        except Exception:
+            installed = []
+        pref = self.s.model("llm_fallback")
+        cands = ([pref] if pref else []) + sorted(installed, key=lambda m: model_traits(m).get("leaks") is not False)
+        skip = ("embed", "bge", "minilm", "nomic", "rerank")
+        for m in cands:
+            if not m or m in self.fallbacks_tried or model_traits(m).get("leaks") or any(k in m for k in skip):
+                continue
+            if installed and m not in installed and f"{m}:latest" not in installed:
+                continue
+            log.warning("switching from %s to %s for this conversation (%s)", cur, m, reason)
+            self.writer.event("model_fallback", frm=cur, to=m, reason=reason)
+            self.llm.model = m
+            self._native_tools = None
+            self.fallbacks_tried.add(m)
+            return True
+        return False
 
     def _say_simple(self, text: str, speak: bool) -> None:
         self.on_text(text)

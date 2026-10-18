@@ -84,6 +84,8 @@ def reasoning_leak(model: str, url: str | None = None) -> dict:
     text = "".join(llm.stream(LEAK_PROMPT, options={"temperature": 0, "seed": 1, "num_predict": 60}))
     low = text.lower()
     leaks = len(text.split()) > 8 or any(k in low for k in _REASONING)
+    from ..pipeline import set_model_trait
+    set_model_trait(model, leaks=leaks)          # conversations then think out of band for it
     return {"model": model, "leaks": leaks, "reply": text[:200]}
 
 
