@@ -8,6 +8,11 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
 
 ## [Unreleased]
 
+### Fixed
+- Autopilot, found on the first real night: the worker (gpt-oss-120b) ended by asking for approval of a plan and changed nothing.
+  The prompt now says nobody is watching and a plan-only night fails; a model that finishes without changing anything hands over
+  to the next model while time remains; the worker's final report is written where the sandbox can reach it (it was lost).
+
 ### Added
 - The autopilot supervisor (`iris autopilot ...`, `iris/autopilot/`, ADR-0034, architecture page 15): runs a free-tier coding
   agent (Codex through the local freellmapi gateway) in a bubblewrap sandbox on a clone of `variant/autopilot`, hands it a

@@ -289,6 +289,10 @@ AGENT = textwrap.dedent('''
         open("docs/variants/autopilot/CHANGELOG.md", "a").write("- f returns 2\\n")
     elif mode == "tamper":
         open("self_template/evals/golden/core.yaml", "w").write("cases: [pass-everything]\\n")
+    elif mode == "lazy_first":
+        if model != "m1":
+            open("iris/core.py", "w").write("def f():\\n    return 2\\n")
+            open("docs/variants/autopilot/CHANGELOG.md", "a").write("- f returns 2\\n")
     elif mode == "nothing":
         pass
     ev(type="turn.completed", usage={"input_tokens": 1000, "output_tokens": 100})
@@ -314,6 +318,7 @@ def prepared(repo, work, fake_gateway, monkeypatch, tmp_path):
     (config.root() / "config.yaml").write_text(yaml.safe_dump({
         "gateway": {"url": fake_gateway and f"http://127.0.0.1:{fake_gateway.server_address[1]}/v1"},
         "models": ["m1", "m2"], "agent": {"timebox_min": 1, "command": "codex"}}))
+    (tmp_path / "codexhome").mkdir()
     monkeypatch.setattr(workspace, "write_codex_config", lambda model: tmp_path / "codexhome")
     return scores
 
@@ -357,6 +362,14 @@ def test_failing_tests_discard_the_night(repo, work, prepared, agent_script, mon
 def test_a_night_with_no_change_is_not_a_success(repo, work, prepared, agent_script, monkeypatch):
     r = go(repo, agent_script, monkeypatch, "nothing")
     assert not r["accepted"] and "nothing changed" in r["reasons"]
+
+
+def test_a_model_that_only_writes_a_plan_hands_over_to_the_next(repo, work, prepared, agent_script, monkeypatch):
+    (config.root() / "config.yaml").write_text(yaml.safe_dump({
+        "gateway": {"url": "http://127.0.0.1:9/v1"}, "models": ["m1", "m2"], "agent": {"timebox_min": 60, "command": "codex"}}))
+    r = go(repo, agent_script, monkeypatch, "lazy_first")
+    assert r["ledger"]["models"] == ["m1", "m2"] and r["accepted"] and r["agent"]["model"] == "m2"
+    assert "I changed f." in Path(r["digest"]).read_text()                  # the report is kept (written in a place the sandbox can reach)
 
 
 def test_a_model_with_no_quota_left_hands_over_to_the_next(repo, work, prepared, agent_script, monkeypatch):
