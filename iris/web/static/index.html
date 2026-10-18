@@ -43,6 +43,8 @@
   <section class="panel deck" aria-label="Controls">
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="lists" class="on">LISTS</button>
+      <button role="tab" data-tab="history">HISTORY</button>
+      <button role="tab" data-tab="models">MODELS</button>
       <button role="tab" data-tab="findings">FINDINGS</button>
       <button role="tab" data-tab="voice">VOICE</button>
       <button role="tab" data-tab="jobs">JOBS</button>
@@ -56,6 +58,16 @@
         <button class="btn">ADD</button>
       </form>
       <div id="lists" class="cols3"></div>
+    </div>
+    <div class="tab hidden" id="tab-history">
+      <div class="hist">
+        <div id="sessions" class="sessions" role="listbox" aria-label="Past conversations"></div>
+        <div id="session-view" class="session-view"><div class="dim">pick a conversation</div></div>
+      </div>
+    </div>
+    <div class="tab hidden" id="tab-models">
+      <div id="models-head" class="dim models-head"></div>
+      <div class="table-wrap"><table id="models" class="models"></table></div>
     </div>
     <div class="tab hidden" id="tab-findings"><div id="findings" class="findings"></div></div>
     <div class="tab hidden" id="tab-voice"><div id="knobs" class="knobs"></div></div>

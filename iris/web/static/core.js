@@ -54,6 +54,18 @@
     }
     setLevels(mic, out) { this.mic = mic || 0; this.out = out || 0; }
 
+    // a tool call: a probe flies from the nucleus out to the HUD ring, labelled, and
+    // returns when the tool is done (or after a few seconds)
+    tool(name, detail) {
+      const tag = { web_search: "SEARCH", calculator: "CALC", current_time: "CLOCK" }[name] || String(name || "TOOL").toUpperCase();
+      const seed = [...String(name)].reduce((a, c) => a + c.charCodeAt(0), 0);
+      const angle = -Math.PI / 2 + ((seed % 5) - 2) * 0.42 + rand(-0.12, 0.12);   // upper arc, clear of MIC/OUT
+      this.probes = (this.probes || []).filter((p) => p.state !== "back");
+      this.probes.push({ tag, detail: String(detail || "").slice(0, 28), angle, p: 0, state: "out", t0: this.t });
+      for (let i = 0; i < 8; i++) this.spawn();
+    }
+    toolDone() { (this.probes || []).forEach((p) => { p.state = "back"; }); }
+
     // -- the neuron cloud (unit sphere, built once) -------------------------------------
     build() {
       const n = 120, nodes = [];
@@ -104,7 +116,10 @@
       const i = r * this.cols + c;
       if (v > this.I[i]) { this.I[i] = v; this.C[i] = ch.charCodeAt(0); this.K[i] = k; }
     }
-    text(px, py, s, v, k) { for (let i = 0; i < s.length; i++) if (s[i] !== " ") this.plot(px + i * this.cw, py, s[i], v, k); }
+    text(px, py, s, v, k, solid = false) {
+      // solid: also blank the cells under spaces, so the label reads cleanly over the network
+      for (let i = 0; i < s.length; i++) if (solid || s[i] !== " ") this.plot(px + i * this.cw, py, s[i], v, k);
+    }
     tangent(a) {                                        // glyph for a circle's tangent at angle a
       const tx = -Math.sin(a), ty = Math.cos(a) * this.cw / this.ch;
       const sl = Math.abs(ty) / (Math.abs(tx) + 1e-6);
@@ -153,6 +168,11 @@
         this.nextRipple = this.t + 0.32 - lvl * 0.15;
       }
       this.ripples = this.ripples.filter((r) => { r.r += r.dir * dt * 0.9; r.life -= dt * 0.55; return r.life > 0 && r.r > 0.1 && r.r < 2.1; });
+      this.probes = (this.probes || []).filter((p) => {
+        if (p.state === "out") { p.p = Math.min(1, p.p + dt * 2.2); if (this.t - p.t0 > 8) p.state = "back"; }
+        else p.p -= dt * 1.6;
+        return p.p > 0;
+      });
     }
 
     spawn(from, hops, s, dir) {
@@ -275,6 +295,27 @@
         for (let i = 0; i < n3; i++) {
           const a = i / n3 * Math.PI * 2;
           this.plot(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, "·", rp.life * (0.3 + rp.s * 0.6) * g, K_STATE);
+        }
+      }
+      // tool probes: a beam from the nucleus, a marker at the ring, and what it's doing
+      for (const pr of this.probes || []) {
+        const e = 1 - Math.pow(1 - pr.p, 3), rr = R * 1.52 * e;
+        const ca = Math.cos(pr.angle), sa = Math.sin(pr.angle);
+        const n = Math.max(2, Math.round(rr / this.cw));
+        for (let i = 1; i < n; i++) {
+          const q = i / n, flick = (Math.floor(this.t * 14) + i) % 3 === 0;
+          this.plot(cx + ca * rr * q, cy + sa * rr * q, flick ? "•" : "·", (0.35 + 0.4 * q) * g, K_STATE);
+        }
+        const hx = cx + ca * rr, hy = cy + sa * rr;
+        this.plot(hx, hy, "◆", 1, K_HI);
+        if (pr.p > 0.85) {
+          for (let k = -4; k <= 4; k++) {                       // light up the ring where it lands
+            const aa = pr.angle + k * 0.035;
+            this.plot(cx + Math.cos(aa) * R * 1.52, cy + Math.sin(aa) * R * 1.52, "━", (1 - Math.abs(k) * 0.15) * g, K_HI);
+          }
+          const label = ` [ ${pr.tag}${pr.detail ? " · " + pr.detail : ""} ] `;
+          const lx = hx - label.length * this.cw / 2;
+          this.text(Math.max(0, Math.min(this.W - label.length * this.cw, lx)), hy - this.ch * 1.6, label, 1.2, K_STATE, true);
         }
       }
       // HUD labels on the outer ring

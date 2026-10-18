@@ -178,15 +178,8 @@ class Session:
             self.say_line(f"  {self.s.display_name}: {text}")
 
     def _on_turn(self, rec: dict) -> None:
-        llm, tm = rec.get("llm") or {}, rec.get("timing") or {}
-        summ = {"turn": rec.get("turn"), "user": rec.get("user_text"), "reply": rec.get("reply_spoken"),
-                "mode": rec.get("mode"), "timing": tm, "stt_s": (rec.get("stt") or {}).get("secs"),
-                "llm": {k: llm.get(k) for k in ("model", "ttft_s", "prompt_eval_s", "prompt_tokens", "tok_s",
-                                                 "tokens", "load_s", "done_reason")},
-                "tts": {k: (rec.get("tts") or {}).get(k) for k in ("engine", "first_chunk_gen_s", "gen_s", "audio_s")},
-                "barge_in": rec.get("barge_in"), "cancelled": rec.get("cancelled"), "error": rec.get("error"),
-                "tools": [x.get("name") for x in rec.get("tools") or []],
-                "words": len((rec.get("reply_spoken") or "").split())}
+        from .trace import turn_summary
+        summ = turn_summary(rec)
         self.recent = (self.recent + [summ])[-40:]
         self.bus.publish("turn", **summ)
 
@@ -556,12 +549,66 @@ class Session:
             elif act == "stop":
                 jobs.stop(timeout=5)
             return {"ok": True, "jobs": jobs.status()}
+        if c == "model":
+            return self.use_model(str(cmd.get("name") or ""))
+        if c == "bench_model":
+            return self.bench_model(str(cmd.get("name") or ""))
         if c == "quit":
             if conv and conv.busy():
                 conv.interrupt("quit")
             self.running = False
             return {"ok": True}
         return {"ok": False, "error": f"unknown command {c!r}"}
+
+    def use_model(self, name: str) -> dict:
+        """Switch the LLM now and save it to pod.yaml (a commit you can roll back)."""
+        from .config import set_value
+        if not name or not self.llm.has_model(name):
+            return {"ok": False, "error": f"{name} is not installed on {self.llm.url}"}
+        try:
+            if set_value("models", "llm", name, self.s.root):
+                selfstore.commit(f"you switched the LLM to {name} (web UI)", files=["pods/voice/pod.yaml"], auto=False)
+        except Exception as e:
+            log.warning("could not save the model choice: %s", e)
+        self.s.overrides["model.llm"] = name
+        old = self.llm.model
+        self.llm.model = name
+        if self.conv:
+            self.conv._native_tools = None
+            self.conv.fallbacks_tried.discard(name)
+        threading.Thread(target=lambda: (self.llm.unload(old), self._warm(llm_options(self.s, name))), daemon=True).start()
+        self.writer.event("model_switch", frm=old, to=name, source="ui")
+        self.bus.publish("info", **self.info())
+        self.bus.publish("models")
+        return {"ok": True, "model": name}
+
+    def bench_model(self, name: str) -> dict:
+        """Measure one model now (speed, VRAM, tool choice, reasoning leak), in the background."""
+        if getattr(self, "bench_running", None):
+            return {"ok": False, "error": f"already testing {self.bench_running}"}
+        if self.conv and self.conv.busy():
+            return {"ok": False, "error": "wait until IRIS has finished talking"}
+
+        def run():
+            from .improve import bench
+            self.bench_running = name
+            self.bus.publish("models")
+            try:
+                ctx = int(self.s.knob("llm.num_ctx", 4096))
+                from . import ollama_ctl
+                bench._record("leak", bench.reasoning_leak(name))
+                bench._record("llm", bench.measure(name, ctx, extra=ollama_ctl.profile(self.s, name)))
+                bench._record("tools", bench.tool_accuracy(self.s, name))
+            except Exception as e:
+                log.warning("testing %s failed: %s", name, e)
+                self.bus.publish("note", text=f"testing {name} failed: {e}")
+            finally:
+                self.bench_running = None
+                self._warm(llm_options(self.s, self.llm.model))     # the conversation's model back in VRAM
+                self.bus.publish("models")
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"ok": True, "testing": name}
 
     def run_web(self) -> None:
         from .web.server import WebServer

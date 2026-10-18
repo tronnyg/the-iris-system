@@ -153,6 +153,27 @@ body.solo .solo-btn { opacity: .35; } body.solo .solo-btn:hover { opacity: 1; }
 .findings .f .area { color: var(--aqua); font-size: 11px; letter-spacing: .08em; }
 .findings .f .n { color: var(--gray); font-size: 11px; }
 .findings .f.local .t { color: var(--fg4); }
+.hist { display: grid; grid-template-columns: minmax(220px, 34%) 1fr; gap: 12px; height: 100%; min-height: 0; }
+.sessions, .session-view { overflow-y: auto; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--bg3) transparent; }
+.sess { padding: 4px 6px; border-left: 2px solid transparent; cursor: pointer; }
+.sess:hover { background: var(--bg0); }
+.sess.on { border-left-color: var(--accent); background: var(--bg0); }
+.sess .when { color: var(--yellow); font-size: 11px; letter-spacing: .06em; }
+.sess .what { color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sess .stat { color: var(--gray); font-size: 11px; }
+.hturn { margin-bottom: 8px; }
+.hturn .you { color: var(--blue); } .hturn .iris { color: var(--fg); }
+.hturn .meta { color: var(--gray); font-size: 11px; }
+.hturn .good { color: var(--green); } .hturn .bad { color: var(--red); }
+.models-head { margin-bottom: 6px; font-size: 12px; }
+.table-wrap { overflow-x: auto; }
+.models { border-collapse: collapse; width: 100%; font-size: 12px; }
+.models th { text-align: left; color: var(--yellow); font-weight: 600; letter-spacing: .06em; padding: 3px 8px;
+             border-bottom: 1px solid var(--bg2); white-space: nowrap; }
+.models td { padding: 3px 8px; border-bottom: 1px dashed var(--bg1); white-space: nowrap; color: var(--fg2); }
+.models tr.cur td { color: var(--fg); } .models tr.cur td:first-child { color: var(--accent); }
+.models td.leak { color: var(--red); } .models td.ok { color: var(--green); }
+.models .btn { padding: 1px 8px; font-size: 11px; }
 .knobs { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 16px; }
 .knob label { display: flex; justify-content: space-between; font-size: 12px; color: var(--fg4); }
 .knob input[type=range] { width: 100%; accent-color: var(--orange); padding: 0; border: none; background: none; }

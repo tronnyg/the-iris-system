@@ -46,6 +46,53 @@ def gpu_stats() -> dict | None:
         return None
 
 
+def models_info(session) -> dict:
+    """Installed models on IRIS's Ollama with their latest benchmark numbers and traits."""
+    import requests
+    from .. import ollama_ctl, paths
+    from ..config import Settings
+    from ..llm import ollama_url
+    from ..pipeline import model_traits
+    from ..util import read_jsonl
+    s = session.s if session is not None else Settings.load()
+    current = session.llm.model if session is not None else s.model("llm")
+    url = session.llm.url if session is not None else ollama_url()
+    try:
+        tags = requests.get(f"{url}/api/tags", timeout=5).json().get("models", [])
+    except Exception:
+        tags = []
+    try:
+        loaded = {m.get("name"): round((m.get("size_vram") or 0) / 2**20)
+                  for m in requests.get(f"{url}/api/ps", timeout=3).json().get("models", [])}
+    except Exception:
+        loaded = {}
+    bench: dict = {}
+    for row in read_jsonl(paths.state_dir() / "bench.jsonl"):
+        m = row.get("model")
+        if m:
+            bench.setdefault(m, {})[row.get("kind")] = row
+    ctx = int(s.knob("llm.num_ctx", 4096))
+    out = []
+    for t in tags:
+        name = t.get("name")
+        if any(k in name for k in ("embed", "bge", "minilm", "rerank")):
+            continue
+        d, b = t.get("details") or {}, bench.get(name, {})
+        llm = b.get("llm") or {}
+        warm, cold = llm.get("warm") or {}, llm.get("cold") or {}
+        tools = b.get("tools") or {}
+        out.append({"name": name, "size_gb": round((t.get("size") or 0) / 1e9, 1), "params": d.get("parameter_size"),
+                    "quant": d.get("quantization_level"), "family": d.get("family"),
+                    "current": name == current, "fallback": name == s.model("llm_fallback"),
+                    "loaded_mb": loaded.get(name), "leaks": model_traits(name).get("leaks"),
+                    "bench": {"ttft_s": warm.get("ttft_s"), "tok_s": warm.get("tok_s"), "load_s": cold.get("load_s"),
+                              "vram_mb": llm.get("vram_mb"), "num_ctx": llm.get("num_ctx"), "ts": llm.get("ts"),
+                              "tools": f"{tools.get('passed')}/{tools.get('cases')}" if tools.get("cases") else None}})
+    out.sort(key=lambda m: (not m["current"], m["name"]))
+    return {"current": current, "num_ctx": ctx, "models": out, "testing": getattr(session, "bench_running", None),
+            "ollama": {"mode": ollama_ctl.config(s)["mode"], "url": url, "env": ollama_ctl.config(s)["env"]}}
+
+
 def snapshot(session) -> dict:
     """Everything the page shows that isn't a live event."""
     from .. import jobs, lists, ollama_ctl, paths, trace, voicefx
@@ -187,6 +234,17 @@ def _make_handler(srv: WebServer):
                 except Exception as e:
                     log.exception("state failed")
                     return self._json(500, {"error": str(e)})
+            if u.path == "/api/sessions":
+                from .. import trace
+                days = int((q.get("days") or ["60"])[0])
+                return self._json(200, trace.session_index(min(days, 365)))
+            if u.path == "/api/session":
+                from .. import trace
+                sid = (q.get("id") or [""])[0]
+                rows = [trace.turn_summary(t) for t in trace.turns(days=365, session=sid) if t.get("turn") is not None]
+                return self._json(200, rows)
+            if u.path == "/api/models":
+                return self._json(200, models_info(srv.session))
             if u.path == "/report":
                 from ..improve.report import latest
                 p = latest()

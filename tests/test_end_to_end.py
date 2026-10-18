@@ -139,6 +139,15 @@ def test_cli_talk_web_ui(ollama, iris_home):
         assert post({"cmd": "list_add", "text": "a timer tool", "list": "features"})["ok"]
         assert post({"cmd": "text", "text": "add dark mode to my feature list"})["ok"]
         assert wait(lambda e: e["type"] == "say" and "feature list" in e.get("text", ""), 15)
+        get = lambda path: json.loads(urllib.request.urlopen(f"{base}{path}{'&' if '?' in path else '?'}token={token}",
+                                                             timeout=10).read())
+        sess = get("/api/sessions")
+        assert sess and sess[0]["turns"] >= 1 and "japan" in sess[0]["first"]
+        hist = get(f"/api/session?id={sess[0]['session']}")
+        assert hist[0]["reply"] and "Tokyo" in hist[0]["reply"] and hist[0]["feedback"] == "good"
+        models = get("/api/models")
+        assert models["current"] == "qwen3:4b" and any(m["name"] == "qwen3:4b" and m["current"] for m in models["models"])
+        assert not post({"cmd": "model", "name": "nope:1b"})["ok"]
         assert post({"cmd": "quit"})["ok"]
         assert p.wait(timeout=30) == 0
     finally:
