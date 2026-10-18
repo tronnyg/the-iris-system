@@ -338,6 +338,14 @@ def test_a_good_night_is_kept_tagged_published_and_reported(repo, work, prepared
     assert "KEPT" in d and "I changed f." in d and "holdout: 49/50" in d and "tokens" in d
 
 
+def test_what_main_brought_in_is_not_counted_as_the_workers_change(repo, work, prepared, agent_script, monkeypatch):
+    write(repo, "iris/autopilot/x.py", "A = 2\n")                         # main moved a frozen file (the supervisor itself was fixed)
+    sh(repo, "commit", "-qam", "supervisor fix on main")
+    r = go(repo, agent_script, monkeypatch, "improve")
+    assert r["accepted"] and r["sync"]["status"] == "merged" and "iris/autopilot/x.py" not in r["fence"]["changed"]
+    assert "A = 2" in sh(repo, "show", "variant/autopilot:iris/autopilot/x.py")
+
+
 def test_a_night_that_tampers_with_the_referees_is_discarded(repo, work, prepared, agent_script, monkeypatch):
     start = sh(work, "rev-parse", "HEAD")
     r = go(repo, agent_script, monkeypatch, "tamper")

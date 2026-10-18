@@ -9,6 +9,11 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
 ## [Unreleased]
 
 ### Fixed
+- Autopilot: after main moved (a supervisor fix), every night was discarded as "frozen file changed": the fence compared the
+  worker's clone with the commit from before main was merged in, so main's own changes counted as the worker's. The starting
+  commit is now taken after the merge.
+
+### Fixed
 - Autopilot, found on the first real night: the worker (gpt-oss-120b) ended by asking for approval of a plan and changed nothing.
   The prompt now says nobody is watching and a plan-only night fails; a model that finishes without changing anything hands over
   to the next model while time remains; the worker's final report is written where the sandbox can reach it (it was lost).

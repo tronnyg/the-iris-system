@@ -192,11 +192,11 @@ def run(force: bool = False, repo: Path | None = None, use_sandbox: bool = True,
     try:
         with locks.hold("night"):
             night = ledger.Night(date=date)
-            start = workspace.git(work, "rev-parse", "HEAD")
             before = workspace.heads(repo)
             state = config.state()
-            result["start"] = start
             status, detail = workspace.sync(work)
+            start = workspace.git(work, "rev-parse", "HEAD")   # after the merge: what main brought in is not the worker's work
+            result["start"] = start
             conflicts = detail.split() if status == "conflict" else []
             result["sync"] = {"status": status, "detail": detail}
             result["dossier"] = build_dossier(work)
