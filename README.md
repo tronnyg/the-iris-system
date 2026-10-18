@@ -82,9 +82,20 @@ asleep, and leans toward your pointer; `f` or double-click makes it full screen 
 captions (Esc leaves); live transcript (dim while generated, bright as spoken)
 with one-click ratings; a per-turn latency waterfall (STT / LLM / generation / TTS / playback)
 against your target; vitals vs targets; GPU and Ollama status; your lists; findings; voice
-sliders; background-job controls; the morning report. Keys: Space/Enter talk or interrupt, `t`
+sliders; background-job controls; the morning report; a HISTORY tab with every past
+conversation; a MODELS tab to compare installed models on this machine (speed, VRAM, tool
+choice, thinking out loud), switch, or test one now. Keys: Space/Enter talk or interrupt, `t`
 type, `m` hands-free/push-to-talk, `+ = -` rate, `f` full screen. Preview without models: `iris eye`. Open it in
 an app window with `ui: {browser_cmd: "chromium --app={url}"}` in pod.yaml.
+
+**Turn-taking:** hands-free mode uses Silero (neural speech detection) and the Smart Turn
+end-of-turn model: a finished sentence gets a reply after ~0.25 s of silence, a mid-thought
+pause gets up to 2 s. Both run on the CPU in a few ms per check; set in pod.yaml
+`vad: {engine: silero|energy, smart_turn: true|false, turn_threshold, turn_max_ms}`.
+
+**Models that think out loud** (some Qwen3 builds ignore "thinking off"): IRIS never speaks the
+leaked reasoning; it switches to another installed model (`models.llm_fallback`, or any clean
+one) and the MODELS tab marks the model. Switch and test models live from that tab.
 
 Other ways in: `iris talk --vad` (hands-free, terminal), `iris chat` (typed, spoken replies),
 `iris chat --silent` (text only), `iris say "some text" --engine chatterbox` (hear a voice).

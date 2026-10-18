@@ -31,25 +31,6 @@ Researched 2026-10-17.
 
 ## Next (high value, evidence-driven)
 
-### Turn-taking: audio end-of-turn model (Smart Turn v3)
-Fixed silence timeouts trade cut-offs (premature_eos_rate) against slow replies
-(trailing_wait_ms). Pipecat's Smart Turn v3 is an open audio end-of-turn model, ~8 MB int8
-ONNX, ~12 ms on modern CPUs per the vendor (third-party: ~20-36 ms), BSD-2 weights, training
-data released. onnxruntime is already in the core venv (faster-whisper). Plan: run it when the
-VAD sees a pause; if "not finished", keep listening up to a cap; lets `vad.silence_ms` drop to
-~300-400 ms. Measure: premature_eos_rate, trailing_wait_ms, first_audio_p50.
-[Smart Turn v3 announcement](https://www.daily.co/blog/announcing-smart-turn-v3-with-cpu-inference-in-just-12ms/) ·
-[v3.1 accuracy](https://www.daily.co/blog/improved-accuracy-in-smart-turn-v3-1/) ·
-[ONNX export](https://huggingface.co/soniqo/Smart-Turn-v3.2-ONNX).
-Alternative (text-based, ~25 ms, LiveKit model license):
-[LiveKit turn detector](https://docs.livekit.io/agents/logic/turns/turn-detector).
-
-### VAD: Silero instead of energy threshold
-Studies rank Silero > WebRTC > RMS energy (what IRIS uses), especially in noise. faster-whisper
-ships the Silero ONNX model, so no new download. Make it a `vad.engine` model choice and let the
-night loop compare false_trigger_rate / premature_eos_rate.
-[Window-size vs accuracy study (2026)](https://arxiv.org/html/2601.17270v1)
-
 ### Ollama server settings on Pascal (IRIS's instance only)
 Flash attention plus `OLLAMA_KV_CACHE_TYPE=q8_0` roughly halves KV-cache memory with negligible
 quality loss per the llama.cpp/Ollama author; it needs flash attention, which may or may not be
@@ -98,6 +79,20 @@ ratings, so lessons that don't help get pruned.
   first audio. Revisit only if tok/s limits long replies.
 
 ## Done
+
+- 2026-10-18: **Smart Turn v3.2** end-of-turn model + **Silero** speech detection (`iris/turn.py`,
+  pod.yaml `vad:`). Measured on Kokoro speech: finished questions end after ~260 ms of silence
+  (was 700 ms); an unfinished phrase waits the full 2 s. Synthetic speech with falling
+  intonation can fool it; watch `smart_turn_end_rate`, `turn_timeout_rate`,
+  `premature_eos_rate` on real use and tune `vad.turn_threshold` / `turn_max_ms`.
+  [Smart Turn v3](https://www.daily.co/blog/announcing-smart-turn-v3-with-cpu-inference-in-just-12ms/) ·
+  [model](https://huggingface.co/pipecat-ai/smart-turn-v3)
+- 2026-10-18: **Reasoning-leak guard**: the first sentence is held; leaked chain of thought is
+  never spoken; the model is marked leaky and an installed clean model (or
+  `models.llm_fallback`) answers instead. Tried and rejected: out-of-band thinking (qwen3:4b
+  spent 1100+ thinking tokens on "2+2") and prefilling an empty think block (ignored).
+- 2026-10-18: web UI history browser, model switcher with live per-model tests, tool probes in
+  the neural core; IRIS's Ollama as a transient systemd unit with self-healing client.
 
 - 2026-10-17: Claude escalation removed; findings + dossier + `/improve` handoff; user lists by
   voice; idle/night jobs that yield to conversations; IRIS's own Ollama instance with its own

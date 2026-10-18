@@ -49,7 +49,8 @@ the data IRIS collected:
 |---|---|
 | `iris/talk.py` | live session: audio, turn-taking, wake word, event bus, web-UI commands |
 | `iris/pipeline.py` | one turn: LLM stream -> sanitize -> split -> TTS -> playback; commands (ratings, lists, memory, voice) |
-| `iris/web/` | browser UI (stdlib server, SSE, `static/face.js` ASCII face, `static/app.js`) |
+| `iris/web/` | browser UI (stdlib server, SSE, `static/core.js` ASCII neural core, `static/app.js`) |
+| `iris/turn.py` | Silero speech detection + Smart Turn end-of-turn model (used by `audio.EnergyVAD`) |
 | `iris/improve/night.py` | night/idle stages; `bench.py`, `insights.py` (findings + dossier), `sleep.py` (reflection) |
 | `iris/jobs.py` | background job control and systemd timers |
 | `iris/lists.py` | user lists and the voice phrases for them |
