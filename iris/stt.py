@@ -77,6 +77,12 @@ def preload_cuda_libs() -> bool:
     return False
 
 
+def is_gpu_failure(e: BaseException) -> bool:
+    """A CUDA error from the recogniser (out of memory, or a broken context after one)."""
+    msg = str(e).lower()
+    return any(k in msg for k in ("cuda", "cublas", "cudnn", "out of memory", "device ordinal"))
+
+
 class STT:
     """`name` may end in "@gpu" (e.g. "large-v3-turbo@gpu"): the same Whisper on the GPU, int8."""
 
@@ -170,6 +176,11 @@ class STT:
         tr.hallucination = (text.lower().strip() in HALLUCINATIONS) or (
             tr.no_speech_prob is not None and tr.no_speech_prob > 0.8 and len(text.split()) <= 3)
         return tr
+
+    def drop(self) -> None:
+        """Forget this model (a GPU one gives its memory back once nothing else holds it)."""
+        with STT._lock:
+            STT._models.pop((self.name, self.device), None)
 
     @classmethod
     def unload_all(cls) -> None:

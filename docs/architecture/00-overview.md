@@ -163,8 +163,9 @@ The details of each box are in pages 01 to 05.
 | RAM | 15 GB | night-loop models are loaded one at a time |
 | OS | Arch / Omarchy, Wayland, systemd user session | timers, transient units, `notify-send` |
 
-Measured GPU memory (from `state/bench.jsonl` and `state/vram.json`): gemma4 e4b ≈ 2.97 GB, Kokoro ≈
-0.8 GB, large-v3-turbo int8 ≈ 1.1 GB, Chatterbox ≈ 3.3 GB. `iris/vram.py` checks the sum before
+Measured GPU memory: gemma4 e4b ≈ 4.3 GB in a session (2.97 GB in the benchmark, without its vision/audio
+projectors), Kokoro ≈ 0.9 GB, large-v3-turbo int8 ≈ 1.1 GB loaded plus encoder working memory, Chatterbox
+≈ 3.3 GB. Turbo on the GPU does not fit beside gemma4 and Kokoro ([ADR-0029](../adr/0029-gpu-recogniser-fallback.md)). `iris/vram.py` checks the sum before
 anything loads ([ADR-0016](../adr/0016-kokoro-default-voice-and-vram-preflight.md)).
 
 ## 5. Module map (every source file → its page)

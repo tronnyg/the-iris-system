@@ -21,7 +21,10 @@ HEADROOM_MB = 400         # kept free for the LLM's growing KV cache and the des
 DEFAULT_MB = {"kokoro": 800, "chatterbox": 3300, "tone": 0}      # worker peak + context, measured on the GTX 1070
 
 
-STT_MB = {"large-v3-turbo": 1500, "small.en": 700, "base.en": 450, "distil-small.en": 600}    # GPU int8 incl. CUDA context
+# GPU int8 incl. CUDA context *and* the encoder's working memory: large-v3-turbo measured 1088 MB once loaded,
+# and still ran out of memory while encoding next to gemma4 (4.3 GB with its vision/audio projectors) and
+# Kokoro (2026-10-18), so the working memory is budgeted too (estimate, not measured separately)
+STT_MB = {"large-v3-turbo": 2000, "small.en": 900, "base.en": 600, "distil-small.en": 800}
 CPU_STT = "moonshine/base"                                                                  # what a GPU recogniser falls back to
 
 

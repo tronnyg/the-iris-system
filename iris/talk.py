@@ -201,6 +201,8 @@ class Session:
     def _warm(self, opts: dict) -> None:
         try:
             self.llm.warm(opts)
+            from . import vram
+            vram.llm_need_mb(self.llm)        # resident now: remember its real size for the next pre-flight
         except Exception as e:
             log.warning("model warm-up failed: %s", e)
 
@@ -366,8 +368,7 @@ class Session:
             audio_rel = self.writer.save_audio(utt.audio, turn_next)
         self.cur_utt = utt
         prompt = self.stt_context() if int(self.s.knob("stt.context", 1)) else None
-        tr = self.stt.transcribe(utt.audio, beam_size=int(self.s.knob("stt.beam_size", 1)), prompt=prompt,
-                                 hotwords=self.hotwords())
+        tr = self._transcribe(utt.audio, prompt)
         if prompt and tr.text and _echoes_prompt(tr.text, prompt):
             tr.hallucination = True            # Whisper repeated its hint instead of hearing speech
         tr.text = asr_fix.apply(tr.text, (self.s.pod.get("stt") or {}).get("corrections"))
@@ -427,6 +428,29 @@ class Session:
         if res.cancelled != "resume":
             self._mark_handled(utt.includes)
         self.awake_until = time.perf_counter() + self.follow_up_s
+
+    def _transcribe(self, audio, prompt):
+        """Transcribe; if the GPU recogniser fails (seen live: CUDA out of memory next to the LLM, then a
+        broken CUDA context on every later turn), move to the CPU recogniser for the rest of the session and
+        transcribe the same audio again, so the turn isn't lost."""
+        from .stt import is_gpu_failure
+        kw = {"beam_size": int(self.s.knob("stt.beam_size", 1)), "prompt": prompt, "hotwords": self.hotwords()}
+        try:
+            return self.stt.transcribe(audio, **kw)
+        except Exception as e:
+            if not (self.stt.on_gpu and is_gpu_failure(e)):
+                raise
+            old = self.stt.name
+            self.stt.drop()
+            from . import vram
+            self.stt = STT(vram.CPU_STT)
+            self.stt.load()
+            why = f"the GPU recogniser {old} failed ({str(e)[:80]}); listening on the CPU with {self.stt.name} now"
+            log.warning(why)
+            self.writer.event("stt_fallback", frm=old, to=self.stt.name, error=str(e)[:300])
+            self.note(f"hearing moved to the CPU ({self.stt.name}): the GPU ran out of memory")
+            self.bus.publish("info", **self.info())
+            return self.stt.transcribe(audio, **kw)
 
     def _forget_audio(self, rel) -> None:
         if rel:

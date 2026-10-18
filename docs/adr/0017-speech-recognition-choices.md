@@ -1,6 +1,6 @@
 # ADR-0017: Speech recognition: large-v3-turbo on the GPU
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0029
 - **Date:** 2026-10-18
 - **Supersedes:** none
 - **Related:** [architecture/02](../architecture/02-listening.md#5-speech-recognition)

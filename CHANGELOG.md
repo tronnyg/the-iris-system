@@ -8,6 +8,17 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
 
 ## [Unreleased]
 
+### Fixed
+- A GPU recogniser that fails mid-session (CUDA out of memory, broken context) no longer loses turns: the session
+  switches to `moonshine/base` and transcribes the same audio again (trace event `stt_fallback`).
+- GPU memory pre-flight underestimated: the LLM's real resident size is now learned after every warm-up (gemma4 e4b
+  is 4.3 GB in a session with its vision/audio projectors, not the benchmark's 3 GB), and GPU recognisers are
+  budgeted with their encoder working memory (turbo 2 GB).
+
+### Changed
+- The live agent's recogniser is back to `moonshine/base` (large-v3-turbo on the GPU doesn't fit beside gemma4 and
+  Kokoro on 8 GB; ADR-0029).
+
 ### Docs
 - Detailed architecture docs: 15 pages in `docs/architecture/` with Mermaid diagrams for every part, a module map,
   a configuration reference and the data layout; `docs/README.md` as the index with documentation rules for people

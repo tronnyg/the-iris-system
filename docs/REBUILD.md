@@ -192,7 +192,7 @@ plain Python); `tests/test_session_replay.py` holds the real phrases that once f
 | first chunk | at a clause after 30 chars and 4 words, or a phrase boundary after 10 words | same |
 | semantic recall | cosine ≥ max(0.68, median + 0.10) with bge-small | [ADR-0009](adr/0009-incremental-memory-and-recall.md) |
 | garble guard | Whisper avg_logprob below −0.9, 1–8 words: ~5 % of turns, 82–100 % precision | [ADR-0018](adr/0018-garble-guard.md) |
-| recogniser WER on the user's voice | Moonshine 26 %, small.en 18 %, large-v3-turbo GPU 5 % (0.59 s) | [ADR-0017](adr/0017-speech-recognition-choices.md) |
-| GPU memory | gemma4 e4b ~3.0 GB, Kokoro ~0.8, turbo int8 ~1.1–1.5, Chatterbox ~3.3 GB | [ADR-0016](adr/0016-kokoro-default-voice-and-vram-preflight.md) |
+| recogniser WER on the user's voice | Moonshine 26 %, small.en 18 %, large-v3-turbo GPU 5 % (0.59 s; does not fit beside gemma4 + Kokoro on 8 GB) | [ADR-0017](adr/0017-speech-recognition-choices.md), [ADR-0029](adr/0029-gpu-recogniser-fallback.md) |
+| GPU memory | gemma4 e4b ~4.3 GB in a session (~3.0 in the benchmark), Kokoro ~0.9, turbo int8 1.1 loaded + encoder working memory, Chatterbox ~3.3 GB | [ADR-0016](adr/0016-kokoro-default-voice-and-vram-preflight.md), [ADR-0029](adr/0029-gpu-recogniser-fallback.md) |
 | rollback | judge after 15 turns or 7 days; revert if > 10 % worse or first audio > 25 % slower | [ADR-0004](adr/0004-change-tiers-and-rollback.md) |
 | leak verdict | holds the first sentence until 3 clean replies; a leak verdict expires after 3 days | [ADR-0013](adr/0013-reasoning-leak-guard.md) |

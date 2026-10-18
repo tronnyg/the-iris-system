@@ -37,6 +37,7 @@ Every line has `schema`, `type`, `session`, `ts`.
 | `garble_ask` / `garble_confirmed` / `garble_rejected` | garble guard | `text`, `logprob` |
 | `model_fallback` | leak guard switching models | `frm`, `to`, `reason` |
 | `model_switch` | web UI MODELS tab | `frm`, `to`, `source` |
+| `stt_fallback` | the GPU recogniser failed mid-session (CUDA error) | `frm`, `to`, `error` |
 
 ### The turn record
 
