@@ -228,3 +228,16 @@ def test_one_leaked_reply_gets_a_retry_with_a_nudge_before_any_model_switch(fake
     assert r.spoken == "Sure, adding a status helps." and said == ["Sure, adding a status helps."]
     assert llm.model == "good:4b" and model_traits("good:4b").get("leaks") is None          # not condemned by one slip
     assert len(llm.calls) == 2 and "Answer the user directly" not in llm.calls[0] and r.record["turn"] == 1
+
+
+def test_a_leaky_verdict_expires():
+    import json, time
+    from iris import paths
+    from iris.pipeline import model_traits, set_model_trait
+    set_model_trait("m:1b", leaks=True)
+    assert model_traits("m:1b")["leaks"] is True
+    p = paths.state_dir() / "model_traits.json"
+    d = json.loads(p.read_text())
+    d["m:1b"]["checked"] = time.time() - 4 * 86400
+    p.write_text(json.dumps(d))
+    assert "leaks" not in model_traits("m:1b")

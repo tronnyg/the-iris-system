@@ -98,9 +98,15 @@ def _traits_path():
     return paths.state_dir() / "model_traits.json"
 
 
+LEAK_VERDICT_DAYS = 3        # a "leaks" verdict is re-checked after this long (one bad day isn't forever)
+
+
 def model_traits(model: str) -> dict:
     from .util import read_json
-    return dict((read_json(_traits_path(), {}) or {}).get(model) or {})
+    d = dict((read_json(_traits_path(), {}) or {}).get(model) or {})
+    if d.get("leaks") is True and time.time() - float(d.get("checked") or 0) > LEAK_VERDICT_DAYS * 86400:
+        d.pop("leaks")                                    # unknown again: the guard checks it afresh
+    return d
 
 
 def set_model_trait(model: str, **kv) -> None:
