@@ -707,3 +707,64 @@ def test_the_llms_real_gpu_use_beats_ollamas_own_figure(monkeypatch):
 def test_descendant_processes_are_found():
     import os
     assert os.getpid() in vram._descendants(os.getppid())
+
+
+# -- found by analysing 223 real turns (2026-10-18): ordinary talk taught as a pronunciation; lookups missed ------------
+@pytest.mark.parametrize("said", [
+    "also read that series what is another good one.",          # taught the word "also" (bare "read" matched)
+    "the book is read aloud",
+    "she said hello like a pro",
+    "say hello like you mean it",                               # a sentence, not a respelling
+    "voice is like a robot",
+    "I read books like this",
+    "the word is spoken in many countries",
+])
+def test_ordinary_sentences_are_not_pronunciation_lessons(said):
+    assert respell.parse_teach(said) is None
+    c = conv()
+    assert c._pronunciation_command(said) is None
+    assert Settings.load().respell == {}
+
+
+@pytest.mark.parametrize("said, word, say", [
+    ("cumin is said like kyoo min", "cumin", "kyoo min"),
+    ("the word Nguyen is pronounced win", "Nguyen", "win"),
+    ("pronounce cumin as koo-min", "cumin", "koo-min"),
+])
+def test_real_lessons_still_work(said, word, say):
+    assert respell.parse_teach(said) == (word, say)
+
+
+@pytest.mark.parametrize("said, intent", [
+    ("Please search up and tell me what the weather is in Cape Town currently.", "weather"),
+    ("You search what the current exchange it is from rands to U. S. dollars.", "currency"),
+    ("Can you search what is the exchange rate for usd to zar", "currency"),
+    ("What about yen to rand", "currency"),
+    ("They read a paragraph from Wikipedia on the Odyssey movie.", "wikipedia"),
+    ("Perfect. Now I need another Wikipedia article based on the movie Spider-Man.", "wikipedia"),
+    ("what is the weather like in Cape Town", "weather"),
+])
+def test_lookups_understand_how_the_requests_were_really_phrased(said, intent, monkeypatch):
+    fake_net(monkeypatch)
+    got = lookups.answer(said)
+    assert got and got[0] == intent and "offline" not in got[1]
+
+
+def test_the_wrapper_is_unwrapped_to_the_right_place_and_currency(monkeypatch):
+    calls = []
+    fake_net(monkeypatch, calls=calls)
+    assert lookups.answer("Please search up and tell me what the weather is in Cape Town currently.")[1].startswith("Right now in Cape Town")
+    assert lookups.answer("You search what the current exchange it is from rands to U. S. dollars.")[1].startswith("One rand is 0.06085 US dollars")
+    assert any("name=Cape+Town" in u for u in calls)
+
+
+@pytest.mark.parametrize("said", [
+    "I want you to search up and read a paragraph from Wikipedia. Make it fairly long so I can see how well you speak",
+    "Can you tell me that time and weather in Cape Town?",       # two things at once: left to the model
+    "Asking for the weather.",
+    "please search for a good recipe for chili",
+    "what about the rest of the story",
+])
+def test_requests_that_are_not_complete_lookups_still_go_to_the_model(said, monkeypatch):
+    fake_net(monkeypatch)
+    assert lookups.answer(said) is None

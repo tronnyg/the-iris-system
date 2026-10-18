@@ -9,6 +9,13 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
 ## [Unreleased]
 
 ### Fixed
+- Ordinary sentences were taught as pronunciations ("also read that series what is another good one" would have saved a
+  pronunciation for "also"): teaching needs "pronounced", "said/spoken/read like|as", "say/pronounce X like|as Y", "X
+  sounds like Y" or the spelled form, and a respelling of 1–4 short syllables without function words.
+- Lookups now understand how requests were really phrased: wrapped in "search up and tell me …", "U. S. dollars",
+  "what the weather is in … currently", "what about yen to rand", "(another) Wikipedia article based on …".
+
+### Fixed
 - A GPU recogniser that fails mid-session (CUDA out of memory, broken context) no longer loses turns: the session
   switches to `moonshine/base` and transcribes the same audio again (trace event `stt_fallback`).
 - GPU memory pre-flight underestimated: the LLM's real resident size is now learned after every warm-up (gemma4 e4b
