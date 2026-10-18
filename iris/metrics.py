@@ -27,6 +27,8 @@ DESCRIPTIONS = {
     "llm_tok_s": "LLM tokens per second",
     "premature_eos_rate": "Cut you off mid-thought (share of hands-free turns)",
     "trailing_wait_ms_p50": "Silence waited after you finished (ms)",
+    "smart_turn_end_rate": "Turns ended early by the end-of-turn model",
+    "turn_timeout_rate": "Turns where it waited the full pause (model unsure)",
     "false_trigger_rate": "Noise mistaken for speech (share of utterances)",
     "barge_in_rate": "Replies you interrupted",
     "late_barge_in_rate": "Interrupted late in a reply (too long?)",
@@ -77,6 +79,10 @@ def compute(turns: list[dict]) -> dict:
     if vad:
         m["premature_eos_rate"] = round(sum(1 for t in vad if _get(t, "endpoint", "merged_after_resume")) / len(vad), 3)
         m["trailing_wait_ms_p50"] = p([_get(t, "endpoint", "trailing_silence_ms") for t in vad], 0.5)
+        reasons = [_get(t, "endpoint", "reason") for t in vad]
+        if any(r in ("smart_turn", "turn_timeout") for r in reasons):
+            m["smart_turn_end_rate"] = round(reasons.count("smart_turn") / len(vad), 3)
+            m["turn_timeout_rate"] = round(reasons.count("turn_timeout") / len(vad), 3)
     else:
         m["premature_eos_rate"] = None
         m["trailing_wait_ms_p50"] = None

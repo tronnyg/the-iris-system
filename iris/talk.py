@@ -110,9 +110,7 @@ class Session:
         if self.listen:
             self.stt = STT(self.s.model("stt", "base.en"))
             print(f"  ears: whisper {self.stt.name} loaded in {self.stt.load():.1f}s (CPU)", flush=True)
-            vad = VADConfig(threshold_db=float(self.s.knob("vad.threshold_db", 12)),
-                            silence_ms=int(self.s.knob("vad.silence_ms", 700)),
-                            min_speech_ms=int(self.s.knob("vad.min_speech_ms", 250)))
+            vad = vad_config(self.s)
             device = mic_device(self.mic, self.s)
             if self.headset is None:
                 self.headset = looks_like_headset(mic_name(device))
@@ -317,7 +315,8 @@ class Session:
             return
         endpoint = {"method": utt.method, "speech_ms": utt.speech_ms,
                     "trailing_silence_ms": utt.trailing_silence_ms,
-                    "merged_after_resume": utt.merged_after_resume}
+                    "merged_after_resume": utt.merged_after_resume,
+                    "reason": utt.end_reason or None, "turn_prob": utt.turn_prob}
         if not tr.text or tr.hallucination:
             self._mark_handled(utt.includes)
             self.writer.turn({"turn": None, "mode": utt.method, "audio_in": audio_rel, "user_text": tr.text,
@@ -660,6 +659,23 @@ class Session:
             paths.socket_path().unlink()
         except FileNotFoundError:
             pass
+
+
+def vad_config(s: Settings) -> VADConfig:
+    """Knobs (tuned overnight) plus pod.yaml `vad:` (engine and end-of-turn model).
+
+    Defaults: Silero speech detection and the Smart Turn model, each falling back to the
+    energy detector / silence timeout when its model can't be loaded."""
+    v = s.pod.get("vad") or {}
+    return VADConfig(threshold_db=float(s.knob("vad.threshold_db", 12)),
+                     silence_ms=int(s.knob("vad.silence_ms", 700)),
+                     min_speech_ms=int(s.knob("vad.min_speech_ms", 250)),
+                     engine=str(v.get("engine", "silero")),
+                     silero_threshold=float(v.get("silero_threshold", 0.5)),
+                     smart_turn=bool(v.get("smart_turn", True)),
+                     turn_check_ms=int(v.get("turn_check_ms", 250)),
+                     turn_threshold=float(v.get("turn_threshold", 0.5)),
+                     turn_max_ms=int(v.get("turn_max_ms", 2000)))
 
 
 _WAKE_VARIANTS = {"iris": r"(?:irys|irus|iras|ires|eyris|irish|iris's)"}

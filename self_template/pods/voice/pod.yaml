@@ -42,6 +42,12 @@ audio:
   headset: true           # true: keep listening while IRIS talks, so talking over her interrupts;
                           # auto: on when the mic's name looks like a headset; false: never
 
+vad:
+  engine: silero          # silero: neural speech detection (robust to noise); energy: loudness threshold
+  smart_turn: true        # end-of-turn model: ends early on a finished sentence, waits on a mid-thought pause
+  turn_threshold: 0.5     # P(finished) needed to end the turn (higher = waits more often)
+  turn_max_ms: 2000       # end anyway after this much silence (smart_turn); vad.silence_ms when it's off
+
 wake:
   enabled: true          # true (or `iris talk --wake`): only respond after the wake word
   words: [iris]

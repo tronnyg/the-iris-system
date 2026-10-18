@@ -46,28 +46,55 @@ class VADConfig:
     min_speech_ms: int = 250        # ignore blips shorter than this
     preroll_ms: int = 300           # audio kept from before speech started
     max_utterance_s: float = 30.0
+    engine: str = "energy"          # "energy" | "silero" (neural speech probability, see iris/turn.py)
+    silero_threshold: float = 0.5   # speech starts above this; continues above it minus 0.15
+    smart_turn: bool = False        # ask the end-of-turn model instead of waiting `silence_ms`
+    turn_check_ms: int = 250        # first check after this much silence
+    turn_threshold: float = 0.5     # P(finished) needed to end the turn
+    turn_max_ms: int = 2000         # end anyway after this much silence
 
 
 class EnergyVAD:
-    """Adaptive energy VAD. Feed 20 ms frames; get ("start"|"end", info) events."""
+    """Adaptive VAD. Feed 20 ms frames; get ("start"|"end", info) events.
+
+    Speech vs noise: an energy threshold over the tracked noise floor, or Silero's speech
+    probability (`engine: silero`). End of turn: a fixed silence timeout, or (`smart_turn`)
+    the end-of-turn model asked after a short pause and again every 400 ms, ending early
+    when it hears a finished sentence and waiting longer (up to `turn_max_ms`) when not."""
 
     def __init__(self, cfg: VADConfig):
         self.cfg = cfg
         self.noise = -60.0
+        self.silero = self.turn = None
+        if cfg.engine == "silero" or cfg.smart_turn:
+            from . import turn
+            self.silero = turn.load("silero") if cfg.engine == "silero" else None
+            self.turn = turn.load("turn") if cfg.smart_turn else None
         self.reset()
 
     def reset(self) -> None:
         self.in_speech = False
         self.speech_run = 0
         self.silence_run = 0
+        self.next_check_ms = 0
+        self.turn_prob = None
         self.buf: list[np.ndarray] = []
         self.pre: collections.deque = collections.deque(maxlen=max(1, self.cfg.preroll_ms // FRAME_MS))
+        if self.silero is not None:
+            self.silero.reset()
 
     def process(self, frame: np.ndarray) -> list[tuple[str, dict]]:
         events: list[tuple[str, dict]] = []
         level = dbfs(frame)
         extra = getattr(self, "extra_db", 0.0)
-        is_voice = level > self.noise + self.cfg.threshold_db + extra
+        loud = level > self.noise + self.cfg.threshold_db + extra
+        if self.silero is not None:
+            p = self.silero.feed(frame)
+            thr = self.cfg.silero_threshold - (0.15 if self.in_speech else 0.0)
+            # headset barge-in: speech must also be clearly louder than usual while IRIS talks
+            is_voice = p >= thr and (extra <= 0 or loud)
+        else:
+            is_voice = loud
         if not self.in_speech:
             # track the noise floor only outside speech; faster down than up
             a = 0.05 if level < self.noise else 0.01
@@ -83,7 +110,27 @@ class EnergyVAD:
         self.buf.append(frame)
         self.silence_run = 0 if is_voice else self.silence_run + 1
         speech_ms = len(self.buf) * FRAME_MS
-        if self.silence_run * FRAME_MS >= self.cfg.silence_ms or speech_ms >= self.cfg.max_utterance_s * 1000:
+        silent_ms = self.silence_run * FRAME_MS
+        forced = speech_ms >= self.cfg.max_utterance_s * 1000
+        reason = None
+        if forced:
+            reason = "max_length"
+        elif self.turn is not None:
+            if silent_ms == 0:
+                self.next_check_ms = 0
+            elif silent_ms >= max(self.cfg.turn_check_ms, self.next_check_ms):
+                try:
+                    self.turn_prob = self.turn.complete_prob(np.concatenate(self.buf))
+                except Exception:
+                    self.turn_prob = None
+                if self.turn_prob is not None and self.turn_prob >= self.cfg.turn_threshold:
+                    reason = "smart_turn"
+                self.next_check_ms = silent_ms + 400
+            if reason is None and silent_ms >= self.cfg.turn_max_ms:
+                reason = "turn_timeout"
+        elif silent_ms >= self.cfg.silence_ms:
+            reason = "silence"
+        if reason:
             keep = len(self.buf) - self.silence_run + max(1, 150 // FRAME_MS)   # keep 150 ms of tail
             audio = np.concatenate(self.buf[:max(1, keep)])
             events.append(("end", {
@@ -91,8 +138,12 @@ class EnergyVAD:
                 "speech_ms": (len(self.buf) - self.silence_run) * FRAME_MS,
                 "trailing_silence_ms": self.silence_run * FRAME_MS,
                 "noise_db": self.noise,
-                "forced": speech_ms >= self.cfg.max_utterance_s * 1000,
+                "forced": forced,
+                "reason": reason,
+                "turn_prob": None if self.turn_prob is None else round(self.turn_prob, 3),
             }))
+            self.turn_prob = None
+            self.next_check_ms = 0
             self.in_speech = False
             self.speech_run = 0
             self.buf = []
@@ -113,6 +164,8 @@ class Utterance:
     merged_after_resume: bool = False   # user kept talking after a premature end
     uid: int = 0                        # 1, 2, 3 ... per recorder
     includes: tuple = ()                # uids of every utterance merged into this one (incl. itself)
+    end_reason: str = ""                # silence | smart_turn | turn_timeout | max_length | ptt
+    turn_prob: float | None = None      # end-of-turn model's P(finished) when the turn ended
 
 
 class Recorder:
@@ -229,7 +282,8 @@ class Recorder:
                 self.on_utterance(Utterance(audio=audio, method="vad", t_end=now,
                                             speech_ms=info["speech_ms"],
                                             trailing_silence_ms=info["trailing_silence_ms"],
-                                            merged_after_resume=merged, uid=self._uid, includes=includes))
+                                            merged_after_resume=merged, uid=self._uid, includes=includes,
+                                            end_reason=info.get("reason") or "", turn_prob=info.get("turn_prob")))
 
     def carry_over(self) -> None:
         """The reply to the last utterance was abandoned because the user kept talking:

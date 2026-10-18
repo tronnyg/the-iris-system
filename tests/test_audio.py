@@ -95,3 +95,56 @@ def test_player_counts_underruns_and_flushes():
     assert p.stats.chunks_started == [0, 1]
     p.flush()
     assert p.done.is_set() and p.fill(10).sum() == 0
+
+
+def test_smart_turn_ends_early_when_finished_and_waits_when_not():
+    """With the end-of-turn model, a finished sentence ends after a short pause and an
+    unfinished one keeps listening (up to turn_max_ms)."""
+    from iris.audio import EnergyVAD, VADConfig
+
+    class FakeTurn:
+        def __init__(self, p):
+            self.p, self.calls = p, 0
+
+        def complete_prob(self, audio):
+            self.calls += 1
+            return self.p
+
+    def run(p):
+        v = EnergyVAD(VADConfig(threshold_db=12, silence_ms=700, min_speech_ms=200, turn_check_ms=240,
+                                turn_max_ms=1600))
+        v.turn = FakeTurn(p)
+        events = []
+        for f in frames(np.concatenate([noise(0.5), tone(1.0), noise(2.5)])):
+            events += v.process(f)
+        return [e for e in events if e[0] == "end"], v.turn.calls
+
+    ends, calls = run(0.9)
+    assert len(ends) == 1 and ends[0][1]["reason"] == "smart_turn" and ends[0][1]["turn_prob"] == 0.9
+    assert ends[0][1]["trailing_silence_ms"] <= 300 and calls == 1          # well before 700 ms
+    ends, calls = run(0.1)
+    assert len(ends) == 1 and ends[0][1]["reason"] == "turn_timeout"
+    assert ends[0][1]["trailing_silence_ms"] >= 1600 and calls >= 3        # kept asking, then gave up
+
+
+def test_silero_engine_decides_speech_by_probability():
+    from iris.audio import EnergyVAD, VADConfig
+
+    class FakeSilero:
+        """Speech probability from the frame's loudness, standing in for the model."""
+        prob = 0.0
+
+        def feed(self, frame):
+            self.prob = 0.95 if float(np.abs(frame).max()) > 0.1 else 0.02
+            return self.prob
+
+        def reset(self):
+            self.prob = 0.0
+
+    v = EnergyVAD(VADConfig(min_speech_ms=200, silence_ms=400))
+    v.silero = FakeSilero()
+    v.cfg.threshold_db = 99            # energy alone would never call this speech
+    events = []
+    for f in frames(np.concatenate([noise(0.5), tone(1.0), noise(0.8)])):
+        events += v.process(f)
+    assert [e[0] for e in events] == ["start", "end"] and events[1][1]["reason"] == "silence"
