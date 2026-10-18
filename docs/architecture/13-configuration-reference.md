@@ -134,6 +134,23 @@ Changes apply when the instance restarts: `iris ollama restart`.
 | `evals/tools.yaml` | tool-choice cases `{id, user, expect_tool}` |
 | `evals/tts_sentences.yaml` | `groups:` of texts for round trips and `iris rate` |
 
+## 6b. Autopilot
+
+`$IRIS_HOME/autopilot/config.yaml` (not part of an agent; read by `iris/autopilot/config.py`, defaults in `DEFAULTS`). Only the
+keys you want to change need to be present. Page [15](15-autopilot.md).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `gateway.url` / `gateway.key_file` | `http://127.0.0.1:3001/v1` / `freellmapi.key` | the local freellmapi gateway and its key file (0600) |
+| `models` | `gpt-oss-120b, deepseek-v4-flash, glm-5.3, gemini-3.8-flash` | tried in order; the next takes over when one runs out of quota |
+| `agent.command` / `agent.timebox_min` / `agent.sandbox` | `codex` / 90 / `workspace-write` | the worker and how long one model may work |
+| `budget.max_tokens_per_night` / `budget.stop_after_consecutive_errors` | 4,000,000 / 8 | stop a model for the night |
+| `referees.holdout_drop_points` | 2.0 | largest allowed holdout drop |
+| `referees.tests_timeout_min` | 20 | the test run's limit |
+| `referees.require_variant_changelog` | true | code changes need a line in the variant changelog |
+| `disk.ollama_pull_budget_gb` | 20 | what the worker is told it may `ollama pull` |
+| `timer` | `*-*-* 02:30` | systemd `OnCalendar` of the opt-in timer |
+
 ## 7. Environment variables
 
 | Variable | Effect |

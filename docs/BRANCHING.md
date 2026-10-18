@@ -55,6 +55,10 @@ The only exception to the one-branch rule: versions of the system that are *mean
 | `auto` | `iris branch sync` (after each merge to main; optionally a nightly timer the user enables) | merge main into it, test, push, resolve conflicts through the variant's resolver |
 | `manual` | its owner | nothing: it only reports "N commits behind main" in `iris branch status` |
 
+A registry entry may add `sync: supervisor`: the variant's own supervisor merges main into it inside its sandbox
+(the autopilot does, see [architecture/15](architecture/15-autopilot.md)), and `iris branch sync` reports `supervisor`
+and leaves it alone.
+
 ### Sync algorithm for `auto` variants (`iris branch sync [name]`)
 1. In the variant's worktree: `git merge main --no-commit --no-ff` (a merge, not a rebase: no history rewriting, no force-push).
 2. Conflicts or red tests: call the variant's **resolver** (a pluggable hook; the autopilot variant supplies its own

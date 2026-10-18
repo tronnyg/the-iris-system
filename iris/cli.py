@@ -545,6 +545,13 @@ def cmd_evals(a) -> None:
     print(json.dumps(summarize(res)))
 
 
+def cmd_autopilot(a) -> None:
+    """iris autopilot status|doctor|init|run|pause|resume|stop|enable|disable|reset TAG|report: the supervised free-model trial."""
+    from .autopilot import cli
+    selfstore.init()
+    cli.main(a)
+
+
 def cmd_replay(a) -> None:
     """iris replay [--split train|holdout|all] [--live] [--only ID] [--json] | split SRC | candidates [done|drop ID]."""
     from . import replay
@@ -831,6 +838,11 @@ def main(argv=None) -> None:
     p.add_argument("--judge", action="store_true")
     p.add_argument("--golden", action="store_true", help="golden cases only")
     p.add_argument("--model")
+    p = add("autopilot", cmd_autopilot, "the autopilot trial: status | doctor | init | run | pause | resume | stop | enable | disable | reset TAG | report")
+    p.add_argument("action", nargs="?", default="status",
+                   choices=["status", "doctor", "init", "run", "pause", "resume", "stop", "enable", "disable", "reset", "report"])
+    p.add_argument("name", nargs="?", help="pause: a duration like 2d; reset: the tag")
+    p.add_argument("--force", action="store_true", help="run: even if jobs are paused")
     p = add("replay", cmd_replay, "replay real utterances against the routing and commands (the benchmark): split SRC | candidates")
     p.add_argument("args", nargs="*", help="split SRC | candidates [done|drop ID]")
     p.add_argument("--split", default="train", choices=["train", "holdout", "all"])

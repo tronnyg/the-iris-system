@@ -99,6 +99,8 @@ def load_registry(repo: Path) -> list[dict]:
             raise BranchError(f"{REGISTRY}: duplicate variant {n!r}")
         if v.get("mode") not in ("auto", "manual"):
             raise BranchError(f"{REGISTRY}: variant {n!r} needs mode: auto | manual")
+        if v.get("sync", "tooling") not in ("tooling", "supervisor"):
+            raise BranchError(f"{REGISTRY}: variant {n!r} has sync: tooling | supervisor")
         seen.add(n)
     return items
 
@@ -205,10 +207,12 @@ def _ensure_worktree(repo: Path, name: str) -> Path:
 
 def sync_variant(repo: Path, v: dict, test_cmd: list[str] | None = None,
                  resolver: Resolver | None = None, max_attempts: int = 3) -> str:
-    """Merge main into an `auto` variant, test, push. Returns current | synced | blocked | skipped."""
+    """Merge main into an `auto` variant, test, push. Returns current | synced | blocked | skipped | supervisor."""
     name, branch = v["name"], f"{VARIANT_DIR}/{v['name']}"
     if v["mode"] != "auto":
         return "skipped"                               # manual: tooling never commits to it
+    if v.get("sync") == "supervisor":
+        return "supervisor"                            # its own supervisor merges main inside its sandbox (iris autopilot)
     if branch not in _names(repo, False):
         raise BranchError(f"{branch} does not exist")
     if load_state().get(name, {}).get("blocked"):

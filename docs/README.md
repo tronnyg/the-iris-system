@@ -5,7 +5,7 @@ its own for months, these files (on that branch) are the description of what it 
 
 | Document | Answers |
 |---|---|
-| [architecture/](architecture/00-overview.md) | how every part works, with diagrams (15 pages, start at 00) |
+| [architecture/](architecture/00-overview.md) | how every part works, with diagrams (16 pages, start at 00) |
 | [adr/](adr/README.md) | *why* it is built this way: one record per decision, never rewritten |
 | [../CHANGELOG.md](../CHANGELOG.md) | what changed, merge by merge |
 | [REBUILD.md](REBUILD.md) | set it up on a new machine, move an agent, or re-implement it from zero |
@@ -21,7 +21,7 @@ Architecture pages: [00 overview](architecture/00-overview.md) ·
 [07 self store](architecture/07-self-store.md) · [08 learning loops](architecture/08-learning-loops.md) ·
 [09 jobs & processes](architecture/09-jobs-and-processes.md) · [10 web UI](architecture/10-web-ui.md) ·
 [11 observability](architecture/11-observability.md) · [12 data & files](architecture/12-data-and-files.md) ·
-[13 configuration](architecture/13-configuration-reference.md) · [14 development](architecture/14-development.md)
+[13 configuration](architecture/13-configuration-reference.md) · [14 development](architecture/14-development.md) · [15 autopilot](architecture/15-autopilot.md)
 
 ---
 

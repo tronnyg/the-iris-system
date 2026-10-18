@@ -67,6 +67,8 @@ flowchart TB
 | `logs/` | night/idle, worker and Ollama logs ([09](09-jobs-and-processes.md)) |
 | `variants/<name>/` | git worktrees of auto variants; `variants/state.yaml` (blocked, last sync) ([BRANCHING](../BRANCHING.md)) |
 
+| `autopilot/` | the autopilot supervisor's state ([15](15-autopilot.md)): `config.yaml`, `freellmapi.key` (0600), `state.yaml` (baseline, nights), `work/` (the worker's clone and venv), `runner/` (pinned scorer), `codex/` (worker's Codex config), `home/` (scratch home), `log/` (outbound log, one jsonl per night), `digests/`, `STOP` |
+
 `$XDG_RUNTIME_DIR/iris-<agent>.sock` is the session control socket.
 
 ## 4. What to back up

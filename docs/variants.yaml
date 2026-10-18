@@ -13,6 +13,8 @@
 #     owner: autopilot           # who works on it: you | autopilot | <tool>
 #     agent: iris-trial          # the IRIS agent (self store) it runs against, so main's agent is untouched
 #     created: 2026-10-18
+#     sync: tooling              # optional. tooling (default) = `iris branch sync` merges main into it;
+#                                # supervisor = its own supervisor does (iris autopilot), tooling leaves it alone
 #     retired: false             # true when the experiment is over (the branch is then deleted)
 variants:
   - name: autopilot
@@ -20,5 +22,6 @@ variants:
     purpose: "~2-week trial: a strong free-tier model improves IRIS on its own, inside a fence (docs/plans/autopilot-variant.md)"
     owner: autopilot
     agent: iris-trial
+    sync: supervisor
     created: 2026-10-19
     retired: false

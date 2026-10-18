@@ -222,3 +222,16 @@ def test_docs_only_changes_need_no_changelog_line(repo):
     b.start(repo, "docs/typo")
     commit(repo, "notes.md", "fixed a typo\n")
     assert b.finish(repo, approved=True) == "docs/typo"
+
+
+def test_a_variant_synced_by_its_supervisor_is_left_alone_by_branch_sync(repo):
+    variant(repo, "trial", "auto", **{"v.txt": "x\n"})
+    register(repo, {"name": "trial", "mode": "auto", "sync": "supervisor"})
+    sh(repo, "checkout", "-q", "main")
+    (repo / "m.txt").write_text("main moves\n")
+    sh(repo, "add", "-A"), sh(repo, "commit", "-qm", "main moves")
+    before = sh(repo, "rev-parse", "variant/trial")
+    assert b.sync(repo) == {"trial": "supervisor"} and sh(repo, "rev-parse", "variant/trial") == before
+    register(repo, {"name": "trial", "mode": "auto", "sync": "nobody"})
+    with pytest.raises(b.BranchError, match="sync: tooling | supervisor"):
+        b.load_registry(repo)
