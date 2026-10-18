@@ -63,6 +63,13 @@ class Session:
         paths.ensure_dirs()
         selfstore.init()
         self.s = Settings.load()
+        from . import voicefx
+        try:
+            if voicefx.ensure_knobs(self.s.root):               # e.g. expressiveness range 0..1 -> 0..2
+                selfstore.commit("voice knobs: widened bounds / added knobs", files=["pods/voice/pod.yaml"], auto=False)
+                self.s = Settings.load()
+        except Exception as e:
+            log.warning("could not update voice knobs: %s", e)
         ollama_ctl.ensure(self.s)             # IRIS's own Ollama (pods/brain/ollama.yaml)
         self.mode = mode
         self.speak = speak

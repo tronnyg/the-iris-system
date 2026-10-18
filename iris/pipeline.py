@@ -190,6 +190,7 @@ class Conversation:
         self.on_interrupt = on_interrupt or (lambda reason: None)
         self.fallbacks_tried: set[str] = set()
         self._clean_replies: dict[str, int] = {}
+        self.last_voice: tuple[str, int] | None = None   # for "do that 10 times more"
         self.awaiting_search_until = 0.0     # IRIS asked what to search for: the next utterance is the topic
         self.prev_user_text = ""
         if model_traits(getattr(llm, "model", "")).get("leaks"):
@@ -253,9 +254,12 @@ class Conversation:
     # -- commands -----------------------------------------------------------------------
     def handle_command(self, text: str) -> str | None:
         """Feedback and memory commands. Returns a short spoken acknowledgement or None."""
-        changes = voicefx.parse(text)
+        changes = voicefx.parse(text, last=self.last_voice)
         if changes:                     # "too fast", "louder", "too monotone", "undo" ...
             said = [voicefx.apply(self.s, c, self.voice_history) for c in changes]
+            moved = [c for c in changes if c.knob]
+            if moved:
+                self.last_voice = (moved[-1].knob, moved[-1].direction)
             self.writer.event("voice_feedback", text=text, changes=[c.knob for c in changes], said=said)
             return " ".join(said)
         parsed = parse_feedback(text)
