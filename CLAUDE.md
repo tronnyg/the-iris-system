@@ -59,7 +59,8 @@ the data IRIS collected:
 | `iris/improve/night.py` | night/idle stages; `bench.py`, `insights.py` (findings + dossier), `sleep.py` (reflection) |
 | `iris/jobs.py` | background job control and systemd timers |
 | `iris/branches.py` | branch workflow (one improvement branch from main; variants kept current with main) |
-| `iris/lists.py` | user lists and the voice phrases for them |
+| `iris/lists.py` | user lists and the voice phrases for them (only what the user asks for) |
+| `iris/observations.py` | the reflection's hidden guesses (never on the lists; `iris observations`) |
 | `iris/ollama_ctl.py` | IRIS's private Ollama instance and its config |
 | `iris/metrics.py`, `iris/trace.py` | what is measured per turn and how it's aggregated |
 | `self_template/` | a new agent's self store (persona, pod.yaml knobs/targets, policy, evals) |

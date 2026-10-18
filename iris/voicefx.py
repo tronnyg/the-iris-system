@@ -99,6 +99,9 @@ def _match(t: str) -> list[VoiceChange]:
     return out
 
 
+_LISTY = re.compile(r"\blist\b|\bto-?\s?do\b|\bimprovements\b", re.I)
+
+
 def parse(text: str, last: tuple[str, int] | None = None) -> list[VoiceChange]:
     """Spoken voice feedback -> changes. Only utterances (or clauses of them) that are about the
     voice count, so "the train was too fast" in a story isn't mistaken for feedback.
@@ -107,6 +110,8 @@ def parse(text: str, last: tuple[str, int] | None = None) -> list[VoiceChange]:
     said longer...") are read clause by clause. `last` = (knob, direction) of the previous change,
     so "now do that 10 times more" repeats it harder."""
     t = re.sub(r"^\s*(?:hey\s+)?iris[,.!]?\s*", "", text.strip(), flags=re.I)
+    if _LISTY.search(t):                                  # "add to improvements list that the voice is too high" is a list item
+        return []
     if t.endswith("?") and not re.match(r"(can|could|would|will) you\b", t, re.I):
         return []                                         # "is it too slow?" asks about something else
     low = re.sub(r"[.!?]+\s*$", "", t).strip().lower()

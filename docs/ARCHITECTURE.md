@@ -117,7 +117,7 @@ The local loops measure; they don't engineer. A human-started Claude Code sessio
 does the engineering:
 
 1. During use: your lists (`iris list`, or say "add X to my feature list"), ratings, the
-   after-session reflection (requests as *suggested* list items, capability gaps as findings).
+   after-session reflection (requests and capability gaps are hidden *guesses* in `state/observations.jsonl`, never list items or findings).
 2. Background (after sessions, idle, nightly): metrics, judge scores, evals, benchmarks, findings.
 3. `iris dossier` writes `.iris/dossier/` (lists, findings, summary, bench, evals, conversations,
    done). `/improve` in Claude Code (`.claude/commands/improve.md`) reads it plus
@@ -220,7 +220,7 @@ talking over IRIS interrupts her. Whisper gets the last reply plus names from th
 conversation as its prompt (`stt.context`), and a transcript that merely echoes that hint is
 discarded. A reply cut by `llm.num_predict` ends on its last full sentence and offers to go on.
 Feature requests the reflection hears ("stop when I say stop") go to your improvements list as
-*suggested* items (`iris list`), not into `user.md`.
+hidden guesses (`iris observations`), not into `user.md` or your lists.
 
 ## Tools, wake word, live voice
 

@@ -455,7 +455,7 @@
     S.info = { name: "IRIS", persona: "demo", mode: "vad", wake: false, headset: true, models: { llm: "qwen3:4b", stt: "base.en", tts: "kokoro" }, tools: ["web_search", "calculator", "current_time"] };
     S.targets = { first_audio_s: 1.5, premature_eos_rate: 0.03, reply_words: 45 };
     chips(); latency(); vitals({ first_audio_p50: 1.21, llm_ttft_p50: 0.42, stt_s_p50: 0.31, llm_tok_s: 34, premature_eos_rate: 0.02, false_trigger_rate: 0.05, reply_words_mean: 38, turns: 12 });
-    lists([{ id: 1, list: "features", text: "a timer tool", status: "open" }, { id: 2, list: "improvements", text: "shorter answers in the morning", status: "suggested" }, { id: 3, list: "todo", text: "try the flash-attention benchmark", status: "open" }]);
+    lists([{ id: 1, list: "features", text: "a timer tool", status: "open" }, { id: 2, list: "improvements", text: "shorter answers in the morning", status: "open" }, { id: 3, list: "todo", text: "try the flash-attention benchmark", status: "open" }]);
     findings([{ id: 4, area: "perf", title: "First sound takes 1.9s (target 1.5s); biggest part: llm_ttft_p50", count: 3, source: "findings" }, { id: 7, area: "tools", title: "add a unit-conversion tool", count: 1, source: "local-model" }]);
     knobs({ "tts.speed": { value: 1, min: 0.85, max: 1.2, step: 0.05 }, "tts.volume_db": { value: 0, min: -12, max: 12, step: 2 } });
     sys({ ollama: { mode: "managed", iris: { up: true, url: "http://127.0.0.1:11435", version: "demo", loaded: [{ name: "qwen3:4b", vram_mb: 3400 }] } } });

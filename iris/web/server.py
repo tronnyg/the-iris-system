@@ -111,7 +111,7 @@ def snapshot(session) -> dict:
                                                                       "tts": s.model("tts_engine")}},
         "knobs": knobs,
         "targets": s.pod.get("targets") or {},
-        "lists": lists.items(statuses=("open", "suggested")),
+        "lists": lists.items(statuses=("open",)),
         "findings": insights.ranked(insights.findings())[:10],
         "report": bool(latest()),
         "agent_dir": str(paths.agent_dir()),

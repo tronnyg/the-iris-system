@@ -63,16 +63,18 @@ def test_findings_dedupe_and_rank():
     assert a["id"] not in [r["id"] for r in insights.findings()]
 
 
-def test_reflection_gaps_become_findings(fake_llm):
+def test_reflection_gaps_are_hidden_guesses_not_findings(fake_llm):
     import json
+    from iris import observations
     from iris.improve import insights, sleep
     from iris.memory import Memory
     reply = json.dumps({"user_facts_add": [], "user_requests": [], "capability_gaps": ["set a kitchen timer"],
                         "summary": "Timers."})
     delta, _ = sleep.reflect([{"user_text": "set a timer", "reply_spoken": "I can't."}], Memory(), fake_llm(reply))
     assert sleep.record_gaps(delta.gaps, "s1") == ["set a kitchen timer"]
-    f = insights.findings()[0]
-    assert f["kind"] == "capability-gap" and f["source"] == "reflection"
+    assert insights.findings() == []                                  # the reflection's guesses are not findings
+    o = observations.items()[0]
+    assert o["kind"] == "gap" and o["text"] == "set a kitchen timer" and o["source"] == "reflection"
 
 
 def test_jobs_pause_resume_and_duration():

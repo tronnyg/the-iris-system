@@ -200,6 +200,7 @@ class Conversation:
         self._leaks: dict[str, int] = {}     # leaked replies per model; the first gets one retry with a nudge
         self._nudge = False
         self.awaiting_search_until = 0.0     # IRIS asked what to search for: the next utterance is the topic
+        self.awaiting_list: tuple[str, float] | None = None   # IRIS asked what to add to this list (until ts)
         self.prev_user_text = ""
         if model_traits(getattr(llm, "model", "")).get("leaks"):
             self._switch_model(reason="known to leak its reasoning")
@@ -262,6 +263,18 @@ class Conversation:
     # -- commands -----------------------------------------------------------------------
     def handle_command(self, text: str) -> str | None:
         """Feedback and memory commands. Returns a short spoken acknowledgement or None."""
+        # lists come first: "add to improvements list that the voice is too high" is a list item,
+        # not a pitch command (it used to be swallowed by the voice parser)
+        said = self._awaited_list_item(text) or lists.command(
+            text, session=self.writer.session, turn=self.turn_no or None,
+            resolver=lambda: lists.resolve_item(self.llm, self.history, options=llm_options(self.s, self.llm.model)))
+        if not said:
+            wanted = actions.detect_list_intent(text)
+            if wanted:                   # an order the phrase matcher couldn't cut apart: ask the model, never drop it
+                said = self._list_by_model(text, wanted)
+        if said:                        # "add X to my feature list" (before "remember ...")
+            self.writer.event("list", text=text, said=said)
+            return said
         changes = voicefx.parse(text, last=self.last_voice)
         if changes:                     # "too fast", "louder", "too monotone", "undo" ...
             said = [voicefx.apply(self.s, c, self.voice_history) for c in changes]
@@ -275,12 +288,6 @@ class Conversation:
             fb, note = parsed
             self.writer.feedback(self.turn_no, fb, note=note)
             return "Noted. I'll learn from that." if fb == "bad" else "Noted."
-        said = lists.command(text, session=self.writer.session, turn=self.turn_no or None,
-                             resolver=lambda: lists.resolve_item(self.llm, self.history,
-                                                                 options=llm_options(self.s, self.llm.model)))
-        if said:                        # "add X to my feature list" (before "remember ...")
-            self.writer.event("list", text=text, said=said)
-            return said
         fact = remember_command(text)
         if fact:
             changes = self.memory.apply(Delta([fact], [], [], []),
@@ -293,6 +300,27 @@ class Conversation:
             changes = self.memory.apply(Delta([], [target], [], []))
             self._commit(f"memory: forget '{target}'", changes)
         return None
+
+    def _list_by_model(self, text: str, lst: str) -> str:
+        """The user ordered a list add that the phrase matcher couldn't parse: have the model cut out the
+        item (with the chat's options, so Ollama doesn't reload), or ask once what to add."""
+        lists.context(self.writer.session, self.turn_no or None, text)
+        opts = llm_options(self.s, self.llm.model)
+        item = lists.extract_item(self.llm, text, opts)
+        if not item:                    # "Added to the improvements list." alone: it means what was just discussed
+            item = lists.resolve_item(self.llm, self.history, "that", opts)
+        if item:
+            return lists.add_item(item, lst)
+        self.awaiting_list = (lst, time.time() + 60)
+        return f"What should I add to your {lists.label(lst)} list?"
+
+    def _awaited_list_item(self, text: str) -> str | None:
+        """The answer to "What should I add ...?": the next thing said (within a minute) is the item."""
+        waiting, self.awaiting_list = self.awaiting_list, None
+        if not waiting or time.time() > waiting[1] or actions._CANCEL.match(text.strip()) or len(text.split()) < 2:
+            return None
+        lists.context(self.writer.session, self.turn_no or None, text)
+        return lists.add_item(text.strip(), waiting[0])
 
     def _commit(self, msg: str, changes: list[str]) -> None:
         if not changes or not self.commit_memory:
@@ -320,7 +348,7 @@ class Conversation:
         s = self.s
         fast = fastpath.answer(user_text) if (s.pod.get("fastpath") or {}).get("enabled", True) else None
         llm = _Canned(fast[1], self.llm.model) if fast else self.llm
-        lists.context(self.writer.session, turn)
+        lists.context(self.writer.session, turn, user_text)
         # an explicit "search ..." (or a topic IRIS just asked for) runs the tool directly: a
         # small model skips the tool call often enough to matter (see iris/actions.py)
         web = self.tools.get("web_search")

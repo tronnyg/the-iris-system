@@ -62,15 +62,11 @@ def split_requests(facts: list[str]) -> tuple[list[str], list[str]]:
 
 
 def record_requests(items: list[str], session: str) -> list[str]:
-    """Requests inferred from a conversation go on the improvements list as *suggested*
-    (deduplicated): you only asked in passing, so a Claude Code session confirms them first.
-    Things you explicitly add ("add X to my feature list") are `open` instead."""
-    from .. import lists
-    new = []
-    for it in items:
-        if lists.add(it, "improvements", source="reflection", status="suggested", session=session):
-            new.append(it.strip())
-    return new
+    """Requests the reflection *inferred* are hidden guesses (iris/observations.py), never list
+    items: your lists hold only what you asked for (seen live: it filled the improvements list
+    with things nobody asked for)."""
+    from .. import observations
+    return [it.strip() for it in items if observations.add("request", it, session)]
 
 
 def open_requests() -> list[dict]:
@@ -79,16 +75,10 @@ def open_requests() -> list[dict]:
 
 
 def record_gaps(items: list[str], session: str) -> list[str]:
-    """Things the user tried that IRIS couldn't do: findings for the dossier."""
-    from . import insights
-    out = []
-    for it in items:
-        it = str(it).strip()
-        if it:
-            insights.add("tools", "capability-gap", it, [f"session {session}"], source="reflection",
-                         confidence="low")
-            out.append(it)
-    return out
+    """Things the reflection thinks you tried that IRIS couldn't do: hidden guesses too (it
+    mistook ordinary chat for 'capability gaps'; real ones show up in traces and failed tools)."""
+    from .. import observations
+    return [str(it).strip() for it in items if str(it).strip() and observations.add("gap", str(it), session)]
 
 
 def _state_path():
