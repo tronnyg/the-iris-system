@@ -40,7 +40,7 @@ def cmd_talk(a) -> None:
             if r["regressions"]:
                 print(f"  {len(r['regressions'])} moment(s) saved as regression evals")
             for x in r.get("requests") or []:
-                print(f"  suggested for your improvements list: {x}")
+                print(f"  guess noted (not on your lists; `iris observations`): {x}")
     finally:
         ollama_ctl.release()        # frees the GPU unless a job still needs IRIS's Ollama
 
@@ -144,6 +144,29 @@ def cmd_list(a) -> None:
         _print_items(rows)
         if any(r.get("status") == "suggested" for r in rows):
             print("\n  ? = suggested by the reflection (confirm with: iris list open <id>)")
+
+
+def cmd_observations(a) -> None:
+    """iris observations [--all] | promote ID | dismiss ID: the reflection's guesses (not your lists)."""
+    from . import observations
+    selfstore.init()
+    args = list(a.args)
+    if args and args[0] in ("promote", "dismiss"):
+        for i in args[1:]:
+            if args[0] == "promote":
+                r = observations.promote(int(i))
+                print(f"on your improvements list: #{r['id']} {r['text']}" if r else f"no new guess #{i} (or already listed)")
+            else:
+                r = observations.set_status(int(i), "dismissed")
+                print(f"dismissed: {r['text']}" if r else f"no guess #{i}")
+        return
+    rows = observations.items(None if a.all else ("new",))
+    if not rows:
+        print("  (no guesses)")
+    for r in rows:
+        print(f"  {r['id']:>4}  [{r['kind']}] {r['text']}" + (f"   ({r['status']})" if r.get("status") != "new" else ""))
+    if rows:
+        print("\n  guessed by the local reflection, not asked for by you: iris observations promote <id> | dismiss <id>")
 
 
 def cmd_findings(a) -> None:
@@ -472,7 +495,8 @@ def cmd_status(a) -> None:
     from .improve import insights
     st = ollama_ctl.status(s)
     print(f"ollama     {st['mode']} at {st['url']}: {'up ' + (st['iris'].get('version') or '') if st['iris']['up'] else 'not running (starts with a session or job)'}")
-    print(f"lists      {len(lists.items(statuses=('open',)))} open, {len(lists.items(statuses=('suggested',)))} suggested   (iris list)")
+    from . import observations
+    print(f"lists      {len(lists.items(statuses=('open',)))} open, {len(observations.items())} model guesses to verify   (iris list, iris observations)")
     print(f"findings   {len(insights.findings())} open   (iris findings, iris dossier)")
     j = jobs.status()
     print(f"jobs       {'running pid ' + str(j['running']) if j['running'] else 'idle'}{', PAUSED' if j['paused'] else ''}; "
@@ -684,6 +708,9 @@ def main(argv=None) -> None:
     p.add_argument("--all", action="store_true", help="include done and dropped items")
     p = add("requests", cmd_requests, "older name for `iris list improvements`")
     p.add_argument("--close", type=int, help="mark item <id> as done")
+    p = add("observations", cmd_observations, "what the reflection guessed you wanted (hidden from your lists)")
+    p.add_argument("args", nargs="*", help="promote ID | dismiss ID")
+    p.add_argument("--all", action="store_true")
     p = add("findings", cmd_findings, "what the local loops noticed (iris findings done F3 --note <sha>)")
     p.add_argument("args", nargs="*", help="done ID | drop ID | open ID")
     p.add_argument("--area")

@@ -212,14 +212,19 @@ Close items when implemented:
     # lists
     rows = lists.items(statuses=("open", "suggested"))
     md = ["# The user's lists", "",
-          "Items the user asked for directly (`open`) come first. `suggested` items were inferred",
-          "by the local reflection from conversations: confirm they make sense before building.", ""]
+          "Only what the user asked for is here (`open`). The local reflection's guesses are kept",
+          "apart (last section) and are NOT requests.", ""]
     for name in lists.LISTS:
         mine = [r for r in rows if r.get("list") == name]
         md += [f"## {name}", ""]
         md += [f"- [{r['id']}] ({r.get('status')}, {r.get('source')}) {r['text']}"
                for r in sorted(mine, key=lambda r: (r.get("status") != "open", r.get("ts", 0)))] or ["- (empty)"]
         md.append("")
+    from .. import observations
+    guesses = observations.items()
+    md += ["## Model's guesses (verify with the user; NOT on their lists)", ""]
+    md += [f"- [obs {r['id']}] ({r['kind']}) {r['text']}" for r in guesses] or ["- (none)"]
+    md += ["", "Promote a confirmed one with `iris observations promote <id>`."]
     (out / "lists.md").write_text("\n".join(md))
 
     # findings

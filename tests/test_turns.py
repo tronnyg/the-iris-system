@@ -139,7 +139,7 @@ def test_length_cutoff_ends_on_a_sentence_and_offers_more(fake_llm):
     assert r.record["timing"]["cut_at_length"]
 
 
-def test_feature_requests_go_to_requests_not_memory(fake_llm):
+def test_feature_requests_go_to_hidden_guesses_not_memory_or_lists(fake_llm):
     import json
     from iris.improve import sleep
     from iris.memory import Memory
@@ -150,7 +150,8 @@ def test_feature_requests_go_to_requests_not_memory(fake_llm):
     assert delta.user_add == ["The user has two cats."]
     assert any("stop" in r for r in delta.requests) and len(delta.requests) == 2
     assert sleep.record_requests(delta.requests, "s1") and not sleep.record_requests(delta.requests, "s1")
-    assert len(sleep.open_requests()) == 2
+    from iris import observations
+    assert len(observations.items()) == 2 and sleep.open_requests() == []   # guesses are hidden, lists untouched
 
 
 def test_cue_words_in_round_brackets_are_not_read_aloud():

@@ -15,7 +15,7 @@ itself. Read `CLAUDE.md` first. Focus (may be empty): $ARGUMENTS
    2. findings that recur (high count) or carry hard numbers (bench, metric regressions,
       failure clusters), especially latency on this hardware;
    3. ROADMAP items the evidence supports;
-   4. `suggested` list items and `local-model` findings: hints only; verify against the
+   4. the dossier's "model's guesses" (`iris observations`) and `local-model` findings: hints only; verify against the
       conversations/metrics before acting.
    Pick what fits one focused session (usually 1-4 items). Tell the user the plan in a few
    lines, with the evidence for each item, before large changes.

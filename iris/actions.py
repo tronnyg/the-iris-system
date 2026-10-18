@@ -89,6 +89,41 @@ def detect_search(text: str, awaiting: bool = False, previous: str = "") -> str 
     return None
 
 
+# -- list requests ---------------------------------------------------------------------------
+_L_VERB = re.compile(r"\b(?:add|adding|added|put|note|save|log|record|write|stick|file)\b", re.I)
+_L_NOUN = re.compile(r"\blist\b|\b(?:to|on|onto|in|into|for)\s+(?:the\s+|my\s+|our\s+)?(?:improvements|features|to-?\s?do|todo)\b|"
+                     r"\b(?:add|adding|added)\s+(?:to\s+)?(?:the\s+|my\s+)?(?:improvements|features|to-?\s?do|todo)\s*[,:]", re.I)
+_L_QUESTION = re.compile(r"^\W*(?:how|what|why|when|where|who|which|is|are|does|do|did|has|have|was|were)\b", re.I)
+_L_PAST = re.compile(r"\b(?:you|i|we|they|it|he|she|did|didn'?t|have|haven'?t|has|hasn'?t|never|not|don'?t|doesn'?t|"
+                     r"wasn'?t|was|were|been|being)\s+(?:(?:just|also|already|ever|actually|really)\s+)*$", re.I)
+
+
+def detect_list_intent(text: str) -> str | None:
+    """The list ("todo" | "features" | "improvements") when `text` is an order to add something to a
+    list, however it is worded; None otherwise ("did you add it to the list?" is not an order).
+
+    The phrase matcher in lists.py handles the common wordings and cuts the item out; this is the
+    safety net for the rest, so a request is never silently dropped (seen live: seven "add to
+    improvements list" requests stored nothing)."""
+    from . import lists
+    for sent in re.split(r"(?<=[.!?])\s+", text.strip()):
+        m = _L_VERB.search(sent)
+        if not m or not _L_NOUN.search(sent) or _L_PAST.search(sent[:m.start()]):
+            continue
+        if _L_QUESTION.match(sent) or sent.rstrip().endswith("?") and not re.match(r"^\W*(?:can|could|would|will) you\b", sent, re.I):
+            continue
+        low = sent.lower()
+        name = re.search(r"improvement|feature|future|to-?\s?do|todo|idea|bug|wish", low)
+        return lists.canonical(name.group(0) if name else "todo")
+    return None
+
+
+def mentions_list_action(text: str) -> bool:
+    """Loose test used by the add_to_list tool: did the user say anything about adding or a list?
+    ("yes, add it" after IRIS offered counts; a remark about the weather doesn't.)"""
+    return bool(_L_VERB.search(text) or _L_NOUN.search(text))
+
+
 # -- announcements and claims in the model's own reply -------------------------------------
 _ANNOUNCE = re.compile(
     r"\b(?:let me|i(?:'ll| will| am going to| can)(?: now)?(?: just)?(?: go ahead and)?(?: certainly| absolutely| definitely)?)\s+"
@@ -101,7 +136,12 @@ _CLAIMS = {
                          r"run (?:a |the )?(?:test )?search|checked (?:online|the web))\b|"
                          r"\bi (?:did|have) (?:a |the )?(?:web )?search\b", re.I),
     "list": re.compile(r"\bi(?:'ve| have)? (?:just |now |already )?(?:added|noted|saved|recorded|logged|put|written)\b[^.]{0,60}\b(?:list|request|feature|item|idea)\b|"
-                       r"\bnoted your request\b|\bi(?:'ve| have) (?:noted|added|saved) (?:that|it|this)\b", re.I),
+                       r"\bnoted your request\b|\bi(?:'ve| have) (?:noted|added|saved) (?:that|it|this)\b|"
+                       r"\b(?:lists?|items?) (?:has been |have been |is |are |was |were |now )?(?:been )?(?:updated|added)\b|"
+                       r"\badded to (?:the |your |my )?(?:\w+ )?list\b|\bupdated (?:the |your |my )?(?:\w+ )?list\b", re.I),
+    "pronounce": re.compile(r"\bi(?: will|'ll| can|'m going to)(?: certainly| definitely| absolutely| now)? "
+                            r"(?:adjust|correct|fix|update|change|ensure|make sure|try to|work on|remember to)\b[^.]{0,50}\bpron(?:ou|u)nc|"
+                            r"\bi(?:'ll| will)(?: certainly| definitely)? pronounce\b", re.I),
     "voice": re.compile(r"\bi(?: will|'ll| can|'m going to)(?: certainly| definitely| absolutely)? (?:try|aim|work|focus|endeavou?r)\b[^.]{0,40}"
                         r"\b(?:sound|speak|tone|voice|enthusias|expressive|pacing|pace|delivery|natural|human)|"
                         r"\badjust(?:ing)? my (?:tone|delivery|voice|pacing)\b|\bsound(?:ing)? more (?:enthusiastic|natural|human|expressive)\b", re.I),
@@ -110,6 +150,7 @@ NOTES = {
     "search": "I did not actually run a search this turn; no tool was called.",
     "list": "I did not actually add anything to a list this turn; no tool was called.",
     "voice": "My voice settings did not change this turn; I can't change how I sound by promising to.",
+    "pronounce": "I did not change how I pronounce anything this turn; no pronunciation was saved.",
 }
 
 

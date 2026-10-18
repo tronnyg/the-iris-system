@@ -2,8 +2,8 @@
 
 Say (or type) "add <thing> to my feature list", "put <thing> on the todo list",
 "note for the improvement list: <thing>", or ask "what's on my feature list?".
-Items are also added from the CLI (`iris list`), the web UI, and, marked as
-*suggested*, by the after-session reflection when you asked for something in passing.
+Items are also added from the CLI (`iris list`) and the web UI. Only what you ask for lands
+here: the after-session reflection's guesses are kept apart (iris/observations.py).
 
 The lists are the main input for a Claude Code session on this repo (see CLAUDE.md):
 open items are what you want built; `iris list done <id> --note <sha>` closes one.
@@ -36,14 +36,19 @@ _LIST_WORD = rf"(?:{_KIND}(?:\s+list)?|list)"
 # "Yes, ", "okay so ", "can you please ": the filler people put in front of a command
 _LEAD = (r"^\s*(?:(?:yes|yeah|yep|ok|okay|alright|right|so|and|now|also|then|well|um|uh|hey|iris)\b[,.]?\s+)*"
          r"(?:(?:can|could|would|will) you\s+)?(?:please\s+)?")
-_ADD_VERB = r"(?:add|put|write|note|save|log|record|stick|file)"
+_ADD_VERB = r"(?:add(?:ed)?|put|write|note|save|log|record|stick|file)"
+# "to my improvements list" / "to the todo" ... or, with no determiner (as people actually say it), only
+# unambiguous names: "to improvements list", "to improvements, <item>", "to todo"
+_DET = r"(?:(?:my|the|our|your|a)\s+)"
+_BARE = (r"(?P<list2>(?:improvements|features|to-?\s?do|todo)(?:\s+list)?|"
+         r"(?:improvement|feature|bug|idea|wish|fix(?:es)?|task)s?\s+list)")
+_ANY_LIST = rf"(?:{_DET}{_LIST_WORD}|{_BARE})"
 _ADD_RE = [
     # "add X to my feature list" / "put X on the todo list"
-    re.compile(rf"{_LEAD}{_ADD_VERB}\s+(?P<text>.+?)\s+(?:to|on|onto|in|into)\s+(?:my|the|our|your|a)\s+"
-               rf"{_LIST_WORD}\W*$", re.I | re.S),
+    re.compile(rf"{_LEAD}{_ADD_VERB}\s+(?P<text>.+?)\s+(?:to|on|onto|in|into)\s+{_ANY_LIST}\W*$", re.I | re.S),
     # "add to my feature list: X" / "note for the todo list X"
-    re.compile(rf"{_LEAD}{_ADD_VERB}(?:\s+this|\s+it)?\s+(?:to|on|for|in)\s+(?:my|the|our|your|a)\s+"
-               rf"{_LIST_WORD}\s*[:,-]?\s+(?:that\s+)?(?P<text>\w.+?)\W*$", re.I | re.S),
+    re.compile(rf"{_LEAD}{_ADD_VERB}(?:\s+this|\s+it)?\s+(?:to|on|for|in)\s+{_ANY_LIST}\s*[:,-]?\s+"
+               rf"(?:that\s+)?(?P<text>\w.+?)\W*$", re.I | re.S),
     # "to my feature list the ability to ..." (the verb got lost): needs an item after the list name
     re.compile(rf"{_LEAD}(?:to|on|for|in)\s+(?:my|the|our|your)\s+{_KIND}\s+list\s*[:,-]?\s+"
                rf"(?:that\s+)?(?P<text>\w.+?)\W*$", re.I | re.S),
@@ -146,7 +151,11 @@ def parse(text: str) -> tuple[str, str | None, str] | None:
     for rx in _ADD_RE:
         m = rx.match(text)
         if m and len(m.group("text").split()) >= 1:
-            return "add", m.group("text").strip(), canonical(m.group("list"))
+            # "add to improvements, uh, the voice is wrong": drop the spoken filler in front of the item
+            body = re.sub(r"^(?:(?:uh+|um+|uhm|er+|erm|ah)\b[,.]?\s*)+", "", m.group("text").strip(), flags=re.I) or m.group("text").strip()
+            if re.fullmatch(r"(?:the |my |a )?list", body, re.I):
+                continue                                  # "Added to the improvements list." has no item: not "list"
+            return "add", body, canonical(m.groupdict().get("list") or m.groupdict().get("list2"))
     m = _SHOW_RE.match(text)
     if m:
         return "show", None, canonical(m.group("list"))
@@ -175,12 +184,24 @@ def resolve_item(llm, history: list[dict], phrase: str = "that", options: dict |
 
 
 _LABEL = {"todo": "to-do", "features": "feature", "improvements": "improvement"}
-_CTX: dict = {"session": None, "turn": None}
+_CTX: dict = {"session": None, "turn": None, "text": None}
 
 
-def context(session: str | None, turn: int | None) -> None:
-    """Which conversation turn list items added by a tool belong to."""
-    _CTX["session"], _CTX["turn"] = session, turn
+def context(session: str | None, turn: int | None, text: str | None = None) -> None:
+    """Which conversation turn list items added by a tool belong to, and what the user said in it
+    (so the add_to_list tool can refuse when the user never asked for a list change)."""
+    _CTX["session"], _CTX["turn"], _CTX["text"] = session, turn, text
+
+
+def label(name: str) -> str:
+    return _LABEL[canonical(name)]
+
+
+def user_asked() -> bool:
+    """False only when we know what the user said and it had nothing to do with adding to a list."""
+    from . import actions
+    t = _CTX.get("text")
+    return t is None or actions.mentions_list_action(t)
 
 
 def add_item(text: str, name: str = "todo", source: str = "voice") -> str:
@@ -191,6 +212,24 @@ def add_item(text: str, name: str = "todo", source: str = "voice") -> str:
     if item:
         return f"Added to your {label} list: {item['text']}."
     return f"That's already on your {label} list."
+
+
+def extract_item(llm, text: str, options: dict | None = None) -> str | None:
+    """The item in "add to the improvements list that <long dictated thing>" when the phrase matcher
+    couldn't cut it out: one JSON call with the chat's own options (another num_ctx reloads the model)."""
+    prompt = ("A user told a voice assistant to add something to one of their lists (todo, features or "
+              "improvements). Write the item itself as one short note in the user's own words (under 30 words, "
+              "no quotes, nothing about the list). Reply with JSON only: {\"item\": \"...\"}; use "
+              "{\"item\": \"\"} if they did not say what to add.\n\nThey said: " + text.strip()[:600])
+    try:
+        out = llm.complete_json([{"role": "user", "content": prompt}],
+                                options={**(options or {"num_ctx": 4096}), "temperature": 0, "num_predict": 120}) or {}
+    except Exception:
+        return None
+    item = re.sub(r"\s+", " ", str(out.get("item") or "")).strip(" .\"'")
+    if re.search(r"\blist\b", item, re.I) or re.match(r"(?:please\s+)?(?:add|put|note|save)\b", item, re.I):
+        return None                                   # seen live: the model echoed the command instead of the item
+    return item if len(item.split()) >= 2 else None
 
 
 def show_items(name: str = "todo") -> str:

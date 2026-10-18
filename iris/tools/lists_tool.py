@@ -18,6 +18,8 @@ def _add(args: dict) -> str:
     text = str(args.get("text") or "").strip()
     if not text:
         return "Nothing was added: no item text was given."
+    if not lists.user_asked():          # the model decided to "note" something on its own: never
+        return "Nothing was added: the user did not ask for anything to be added to a list."
     return lists.add_item(text, str(args.get("list") or "todo"))
 
 

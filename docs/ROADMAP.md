@@ -115,6 +115,15 @@ ratings, so lessons that don't help get pruned.
 
 ## Done
 
+- 2026-10-18 (fix/lists-reliability, from session 174811-38a0):
+  - **Lists hold only what you ask for**: the reflection's inferred requests/gaps go to hidden
+    `state/observations.jsonl` (capped, deduplicated; `iris observations promote|dismiss`; shown in the
+    dossier as "model's guesses"), not into your lists or findings.
+  - **List requests land**: determiner optional ("add to improvements list ...", "add to improvements, uh, ..."),
+    lists are parsed before voice commands (a list item about the voice no longer changes the pitch),
+    unparsed orders go to the model for the item (or to the recent conversation, or a single question),
+    the `add_to_list` tool refuses when you asked for nothing, and "list updated" / "I will adjust my
+    pronunciation" claims are flagged. Regression cases: `tests/test_session_replay.py`.
 - 2026-10-18 (session-fixes, from the analysis of session 162726-1a54):
   - **Dead air**: Kokoro chunks carry ~0.3 s of leading and ~0.54 s of trailing silence; trimmed
     (755 ms per chunk, no speech energy lost) and replaced by punctuation-aware gaps. First sound
