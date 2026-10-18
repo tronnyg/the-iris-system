@@ -162,3 +162,32 @@ def test_old_pod_gets_voice_knobs_added():
     voicefx.ensure_knobs()
     knobs = yaml.safe_load(p.read_text())["knobs"]
     assert all(k in knobs for k in voicefx.KNOBS) and knobs["vad.silence_ms"]["value"] == 700
+
+
+def test_chunk_edges_are_trimmed_and_replaced_by_a_deliberate_gap():
+    """Engines pad each chunk with silence; the trimmed speech gets a short, punctuation-aware gap."""
+    import numpy as np
+    from iris import voicefx
+    from iris.config import Settings
+    from iris.tts.client import SynthResult
+    sr = 24000
+    speech = (0.3 * np.sin(np.arange(sr) / 20.0)).astype(np.float32)             # 1.0 s of "speech"
+    padded = np.concatenate([np.zeros(int(0.3 * sr), np.float32), speech, np.zeros(int(0.54 * sr), np.float32)])
+
+    class Pad:
+        def synth(self, text, speed=1.0, opts=None):
+            return SynthResult(audio=padded.copy(), sr=sr, gen_s=0.1, audio_s=len(padded) / sr)
+
+    s = Settings.load()
+    s.overrides["tts.expressiveness"] = 0.5                                      # gap factor 1.0
+    sentence = voicefx.synth(Pad(), "That is it.", s)
+    clause = voicefx.synth(Pad(), "Well, that is it,", s)
+    phrase = voicefx.synth(Pad(), "that is it and", s)
+    assert 1.2 < sentence.audio_s < 1.4 < 1.5                                    # 1.0 + 20+70 ms + 170 ms gap, not 1.84 s
+    assert sentence.audio_s > clause.audio_s > phrase.audio_s
+    assert abs((sentence.audio_s - phrase.audio_s) - 0.145) < 0.02
+    off = Settings.load()
+    off.pod["prosody"] = {"trim_edges": False}
+    assert abs(voicefx.synth(Pad(), "That is it.", off).audio_s - 1.84) < 0.01   # opt out: unchanged
+    assert voicefx.boundary_kind("Hello there.") == "sentence" and voicefx.boundary_kind("[warm] Well,") == "clause"
+    assert voicefx.boundary_kind("and then we") == "phrase"

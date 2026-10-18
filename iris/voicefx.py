@@ -92,6 +92,46 @@ def parse(text: str) -> list[VoiceChange]:
 
 
 # -- rendering -------------------------------------------------------------------------
+# Engines pad every synthesized chunk with silence (Kokoro measured: ~300 ms before and
+# ~540 ms after the speech), so each sentence boundary was ~0.8 s of dead air and every
+# reply started ~0.3 s later than the audio buffer said. Chunk edges are trimmed to the
+# speech and a deliberate gap is put back, shorter after a clause than a sentence.
+EDGE_DB = -50.0              # below this is silence (speech peaks around -10 dB)
+LEAD_KEEP_MS, TAIL_KEEP_MS = 20, 70
+GAPS_MS = {"sentence": 170, "clause": 80, "phrase": 25}
+
+
+def trim_edges(audio: np.ndarray, sr: int, db: float = EDGE_DB, lead_ms: int = LEAD_KEEP_MS,
+               tail_ms: int = TAIL_KEEP_MS) -> np.ndarray:
+    """Cut leading/trailing silence, keeping a little room and fading the new edges."""
+    if len(audio) < sr // 10:
+        return audio
+    loud = np.nonzero(np.abs(audio) > 10 ** (db / 20))[0]
+    if not len(loud):
+        return audio
+    a = max(0, loud[0] - int(sr * lead_ms / 1000))
+    b = min(len(audio), loud[-1] + 1 + int(sr * tail_ms / 1000))
+    out = audio[a:b].copy()
+    n = min(int(sr * 0.004), len(out) // 4)
+    if n:
+        ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)
+        if a > 0:
+            out[:n] *= ramp
+        if b < len(audio):
+            out[-n:] *= ramp[::-1]
+    return out
+
+
+def boundary_kind(text: str) -> str:
+    """How the chunk ends: a sentence, a clause (comma, colon, dash) or mid-phrase."""
+    s = re.sub(r"\[[^\]]*\]", "", text).rstrip(" \"')]")
+    if s and s[-1] in ".!?…":
+        return "sentence"
+    if s and s[-1] in ",;:—–-":
+        return "clause"
+    return "phrase"
+
+
 def knob(settings, name: str) -> float:
     return float(settings.knob(name, KNOBS[name]["value"]))
 
@@ -118,6 +158,10 @@ def synth(tts, text: str, settings, opts: dict | None = None):
     f = 2 ** (pitch / 12) if pitch else 1.0
     res = tts.synth(text, speed=speed * jitter / f, opts=opts)
     audio = np.asarray(res.audio, dtype=np.float32)
+    pc = (getattr(settings, "pod", None) or {}).get("prosody") or {}
+    trim = bool(pc.get("trim_edges", True))
+    if trim:
+        audio = trim_edges(audio, res.sr)
     if f != 1.0 and len(audio):
         audio = resample(audio, int(round(res.sr * f)), res.sr)      # shorter by f = pitch up by f
     if gain_db:
@@ -125,6 +169,9 @@ def synth(tts, text: str, settings, opts: dict | None = None):
         peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
         if peak > 0.98:                                              # never clip: limit instead
             audio = audio * (0.98 / peak)
+    if trim:
+        base = float(({**GAPS_MS, **(pc.get("gaps_ms") or {})})[boundary_kind(text)])
+        gap_ms = gap_ms + base * (0.8 + 0.4 * expr)           # livelier voice = a little more breath
     if gap_ms > 0:
         audio = np.concatenate([audio, np.zeros(int(res.sr * gap_ms / 1000), dtype=np.float32)])
     res.audio = audio
