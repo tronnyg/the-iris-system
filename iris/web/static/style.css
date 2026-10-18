@@ -28,9 +28,9 @@ b { color: var(--accent); font-weight: 700; letter-spacing: .25em; }
   display: grid;
   gap: 10px;
   padding: 10px;
-  grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.35fr) minmax(280px, 1fr);
-  grid-template-rows: 34px minmax(0, 1fr) minmax(170px, 25vh);
-  grid-template-areas: "bar bar bar" "log core tel" "deck deck deck";
+  grid-template-columns: minmax(320px, 1.55fr) minmax(300px, 1fr);
+  grid-template-rows: 34px minmax(180px, 30vh) minmax(0, 1fr) minmax(170px, 25vh);
+  grid-template-areas: "bar bar" "log core" "log tel" "deck deck";
 }
 .topbar { grid-area: bar; display: flex; align-items: center; gap: 16px; padding: 0 10px;
        border: 1px solid var(--bg2); background: #1d2021e6; }
@@ -89,9 +89,14 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 
 .core { grid-area: core; align-items: stretch; padding: 0; overflow: hidden; }
 #core { flex: 1; width: 100%; min-height: 0; display: block; cursor: grab; touch-action: none; }
-.solo-btn { position: absolute; top: 6px; right: 8px; z-index: 2; background: none; border: 1px solid var(--bg2);
-            color: var(--gray); font: inherit; font-size: 13px; padding: 0 6px; cursor: pointer; }
+.solo-btn { position: absolute; top: 6px; right: 8px; z-index: 2; background: #1d2021cc; border: 1px solid var(--bg3);
+            color: var(--fg4); font: inherit; font-size: 11px; letter-spacing: .1em; padding: 2px 8px; cursor: pointer; }
 .solo-btn:hover { color: var(--accent); border-color: var(--accent); }
+.mini-state { position: absolute; left: 10px; bottom: 6px; font-size: 11px; letter-spacing: .2em; color: var(--aqua);
+              pointer-events: none; }
+.mini-state.hearing { color: var(--green); } .mini-state.thinking { color: var(--yellow); }
+.mini-state.speaking { color: var(--orange); } .mini-state.asleep { color: var(--gray); }
+body.solo .mini-state { display: none; }
 .caption { position: absolute; left: 8%; right: 8%; bottom: 64px; text-align: center; color: var(--fg2);
            font-size: 15px; line-height: 1.5; opacity: 0; transition: opacity .6s; pointer-events: none; display: none; }
 .caption.you { color: var(--blue); }
@@ -104,6 +109,7 @@ body.solo .core::before, body.solo .core::after { display: none; }
 body.solo .state-line, body.solo .meters { display: none; }
 body.solo .caption { display: block; bottom: 6px; font-size: clamp(15px, 1.5vw, 21px); }
 body.solo .solo-btn { opacity: .35; } body.solo .solo-btn:hover { opacity: 1; }
+body.solo .solo-btn::after { content: " · ESC"; }
 .state-line { text-align: center; padding: 2px 0; }
 .state { letter-spacing: .3em; font-size: 12px; color: var(--aqua); }
 .state.hearing { color: var(--green); } .state.thinking { color: var(--yellow); }
@@ -184,7 +190,7 @@ body.solo .solo-btn { opacity: .35; } body.solo .solo-btn:hover { opacity: 1; }
 
 @media (max-width: 900px) {
   #app { height: auto; min-height: 100vh; grid-template-columns: minmax(0, 1fr);
-         grid-template-rows: auto 52vh minmax(320px, 60vh) auto minmax(260px, auto);
+         grid-template-rows: auto 30vh minmax(320px, 60vh) auto minmax(260px, auto);
          grid-template-areas: "bar" "core" "log" "tel" "deck"; padding: 8px 16px; }
   .topbar { flex-wrap: wrap; height: auto; padding: 4px 8px; }
   .cols3 { grid-template-columns: minmax(0, 1fr); }

@@ -92,6 +92,7 @@
       if (prev !== "booting" || s !== "asleep") this.ripples.push({ r: 0.15, dir: 1, life: 1, s: 1, wave: true });
     }
     setLevels(mic, out) { this.mic = mic || 0; this.out = out || 0; }
+    setCompact(on) { this.compact = !!on; this.resize(); }
 
     tool(name, detail) {
       const tag = { web_search: "SEARCH", calculator: "CALC", current_time: "CLOCK" }[name] || String(name || "TOOL").toUpperCase();
@@ -130,7 +131,6 @@
       this.outer = nodes.map((m, i) => [i, m.rr]).filter((p) => p[1] > 0.85).map((p) => p[0]);
       this.inner = nodes.map((m, i) => [i, m.rr]).filter((p) => p[1] < 0.65).map((p) => p[0]);
       this.stars = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random(), z: rand(0.2, 1), tw: rand(0, 6.3) }));
-      this.sats = [{ ring: 1.52, speed: 0.55, a: 0 }, { ring: 1.34, speed: -0.33, a: 2.1 }, { ring: 1.72, speed: 0.18, a: 4.2 }];
     }
 
     resize() {
@@ -139,7 +139,8 @@
       if (!w || !h) return;
       this.cv.width = Math.round(w * dpr); this.cv.height = Math.round(h * dpr);
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const fs = clamp(Math.round(Math.min(w, h) / 40), 10, 17);
+      // full view uses a finer grid: more cells, so the eye can carry real detail
+      const fs = this.compact ? clamp(Math.round(Math.min(w, h) / 36), 9, 13) : clamp(Math.round(Math.min(w, h) / 64), 10, 15);
       this.font = `${fs}px "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace`;
       this.ctx.font = this.font;
       this.cw = Math.ceil(this.ctx.measureText("M").width);
@@ -263,7 +264,7 @@
         else q.p -= dt * 1.6;
         return q.p > 0;
       });
-      this.sats.forEach((s) => { s.a += dt * s.speed * (st === "thinking" ? 2.2 : st === "asleep" ? 0.2 : 1); });
+      this.eyeStep(dt);
     }
 
     spawn(from, hops, s, dir) {
@@ -298,223 +299,341 @@
         const X = lerp(m.sx, m.x, k), Y = lerp(m.sy, m.y, k), Z = lerp(m.sz, m.z, k);
         const x = X * cr + Z * sr, z0 = -X * sr + Z * cr;
         const y = Y * ct - z0 * stt, z = Y * stt + z0 * ct;
-        const f = 1 / (1.9 - clamp(z, -1, 1) * 0.35);        // gentle perspective
-        return [cx + x * R * breathe * f * 1.85, cy + y * R * breathe * f * 1.85, clamp(z, -1, 1), m.y];
+        // orthographic, so the sphere stays a true circle; depth shows in glyphs and brightness
+        return [cx + x * R * breathe * 1.06, cy + y * R * breathe * 1.06, clamp(z, -1, 1), m.y];
       });
+    }
+
+    // the eye: where it looks (unit vector, z toward you), how open, how wide the pupil
+    eyeStep(dt) {
+      const st = this.state, t = this.t;
+      const look = this.pointer && t - this.pointer.t < 2.5 && st !== "asleep";
+      if (look) {
+        this.gazeT = { yaw: clamp(this.pointer.x * 1.6, -0.75, 0.75), pitch: clamp(this.pointer.y * 1.6, -0.6, 0.6) };
+      } else if (t > (this.nextSaccade || 0)) {
+        const g = {
+          idle: [rand(-0.6, 0.6), rand(-0.4, 0.4), rand(1.2, 3.6)],
+          booting: [rand(-0.8, 0.8), rand(-0.5, 0.5), rand(0.25, 0.5)],
+          hearing: [rand(-0.12, 0.12), rand(-0.08, 0.1), rand(0.9, 1.8)],     // looks at you
+          thinking: [rand(0.3, 0.55), rand(-0.5, -0.3), rand(0.5, 1.2)],      // up and aside
+          speaking: [rand(-0.18, 0.18), rand(-0.1, 0.12), rand(0.6, 1.5)],
+          asleep: [0, 0.45, 5],
+        }[st] || [0, 0, 2];
+        this.gazeT = { yaw: g[0], pitch: g[1] };
+        this.nextSaccade = t + g[2];
+      }
+      const k = st === "idle" || st === "booting" ? 0.3 : 0.16;            // saccades snap, tracking glides
+      this.gaze = this.gaze || { yaw: 0, pitch: 0 };
+      this.gaze.yaw = lerp(this.gaze.yaw, this.gazeT.yaw, k);
+      this.gaze.pitch = lerp(this.gaze.pitch, this.gazeT.pitch, k);
+      // blink: the iris shutters closed and open again, now and then
+      if (this.blinkP == null) { this.blinkP = -1; this.blinkAt = 2; }
+      if (this.blinkP < 0 && t > this.blinkAt && st !== "asleep") this.blinkP = 0;
+      let open = st === "asleep" ? 0.08 : 1;
+      if (this.blinkP >= 0) {
+        this.blinkP += dt / 0.22;
+        open *= 1 - Math.sin(Math.min(1, this.blinkP) * Math.PI);
+        if (this.blinkP >= 1) { this.blinkP = -1; this.blinkAt = t + (Math.random() < 0.15 ? 0.3 : rand(3.5, 7)); }
+      }
+      this.open = lerp(this.open == null ? 1 : this.open, open, 0.5);
+      const pupil = { hearing: 0.2 + this.micS * 0.12, speaking: 0.15 + this.outS * 0.1, thinking: 0.105,
+                      asleep: 0.09, booting: 0.13 }[st] || 0.155;
+      this.pupil = lerp(this.pupil || 0.15, pupil, 0.2);
+      this.irisSpin = (this.irisSpin || 0) + dt * (st === "thinking" ? 1.4 : st === "booting" ? 2 : 0.12);
     }
 
     draw() {
       if (!this.I) return;
       this.I.fill(0);
-      const st = this.state, g = this.m.glow, t = this.t;
+      const st = this.state, g = this.m.glow, t = this.t, small = this.compact;
       const W = this.W, H = this.H, cx = W / 2, cy = H * 0.5;
-      // everything (rings, labels, panels) must fit: outer ring at 1.72R plus side labels
-      const R = Math.max(20, Math.min((W / 2 - this.cw * 9) / 1.8, (H / 2 - this.ch * 1.6) / 1.78)) * (this.zoom || 1);
+      // full view: the outer tick ring (1.58R) leaves room for the edge read-outs; compact: just the eye
+      const R = small ? Math.max(12, Math.min(W, H) / 2 / 1.66)
+        : Math.max(20, Math.min((W / 2 - this.cw * 18) / 1.5, (H / 2 - this.ch * 3) / 1.5)) * (this.zoom || 1);
+      this.R = R;
       const boot = clamp((t - 0.3) / 1.6, 0, 1);              // rings draw themselves on at start
+      const wired = clamp((t - 0.9) / 1.2, 0, 1);             // synapses connect as the neurons arrive
       const P = this.project(R, cx, cy);
-      const wired = clamp((t - 0.9) / 1.2, 0, 1);              // synapses connect as the neurons arrive
       const depth = (z) => 0.35 + 0.65 * (z + 1) / 2;         // 0.35 (back) .. 1 (front)
+      const Rs = R * 1.06;                                     // the sphere's radius on screen
+      // the eye on the sphere: iris centre and its plane (u, v) facing the gaze direction
+      const gy = this.gaze ? this.gaze.yaw : 0, gp = this.gaze ? this.gaze.pitch : 0;
+      const d = [Math.sin(gy) * Math.cos(gp), Math.sin(gp), Math.cos(gy) * Math.cos(gp)];
+      let u = [d[2], 0, -d[0]];
+      const ul = Math.hypot(u[0], u[2]) || 1; u = [u[0] / ul, 0, u[2] / ul];
+      const v = [d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]];
+      const ex = cx + d[0] * Rs * 0.86, ey = cy + d[1] * Rs * 0.86;
+      const RI = 0.56;                                         // iris radius, in sphere radii
+      const eyeAt = (r, a, open = 1) => {                      // a point on the iris disc, on screen
+        const c = Math.cos(a) * r, s = Math.sin(a) * r * open;
+        return [ex + (u[0] * c + v[0] * s) * Rs, ey + (u[1] * c + v[1] * s) * Rs];
+      };
+      const irisR = RI * Rs * 1.05;
+      const inIris = (x, y) => (x - ex) ** 2 + (y - ey) ** 2 < irisR * irisR;
 
-      // starfield: far, faint, drifting, a little parallax with the pointer
+      // starfield
       const px = (this.pointer ? this.pointer.x : 0) * 18, py = (this.pointer ? this.pointer.y : 0) * 12;
-      for (const s of this.stars) {
+      const nstars = small ? 18 : this.stars.length;
+      for (let i = 0; i < nstars; i++) {
+        const s = this.stars[i];
         const x = ((s.x * W + t * 3 * s.z + px * s.z) % W + W) % W, y = s.y * H + py * s.z;
-        const tw = 0.06 + 0.1 * s.z * (0.6 + 0.4 * Math.sin(t * 1.3 + s.tw));
-        this.plot(x, y, s.z > 0.8 ? "·" : ".", tw, K_DIM);
+        this.plot(x, y, s.z > 0.8 ? "·" : ".", 0.06 + 0.1 * s.z * (0.6 + 0.4 * Math.sin(t * 1.3 + s.tw)), K_DIM);
       }
-
-      // radar scan plane (idle / asleep / booting): a slice sweeping through the sphere
+      // radar scan plane (idle / asleep / booting)
       if (st === "idle" || st === "asleep" || st === "booting") {
-        const sy = Math.sin(t * 0.55) * 0.95;                 // plane height in sphere space
-        const rx = Math.sqrt(Math.max(0, 1 - sy * sy)) * R * 0.97;
-        const yc = cy + sy * R * Math.cos(this.tilt) * 0.97;
-        const ry = rx * Math.sin(this.tilt) * 0.95;
+        const sy = Math.sin(t * 0.55) * 0.95;
+        const rx = Math.sqrt(Math.max(0, 1 - sy * sy)) * Rs * 0.97;
+        const yc = cy + sy * Rs * Math.cos(this.tilt) * 0.97, ry = rx * Math.sin(this.tilt) * 0.95;
         const nn = Math.round(rx * 6.3 / this.cw * 1.4);
         for (let i = 0; i < nn; i++) {
-          const a = i / nn * Math.PI * 2;
-          const front = Math.sin(a) > 0;          // the near half of the slice reads as a scan line
-          this.plot(cx + Math.cos(a) * rx, yc + Math.sin(a) * ry, front ? "─" : "·", (front ? 0.5 : 0.18) * g, K_ACC);
+          const a = i / nn * Math.PI * 2, front = Math.sin(a) > 0;
+          const x = cx + Math.cos(a) * rx, y = yc + Math.sin(a) * ry;
+          if (front && inIris(x, y)) continue;
+          this.plot(x, y, front ? "─" : "·", (front ? 0.45 : 0.16) * g, K_ACC);
         }
         this.nodes.forEach((m, i) => { if (Math.abs(P[i][3] - sy) < 0.07) m.act = Math.max(m.act, 0.35); });
       }
-
-      // synapses
+      // synapses (kept out of the iris so the eye reads cleanly)
       for (const [a, b] of this.edges) {
         const pa = P[a], pb = P[b], act = Math.max(this.nodes[a].act, this.nodes[b].act);
-        const v = (0.1 + 0.2 * depth((pa[2] + pb[2]) / 2) + 0.45 * act) * g * wired;
-        if (v <= 0) continue;
+        const val = (0.1 + 0.2 * depth((pa[2] + pb[2]) / 2) + 0.45 * act) * g * wired;
+        if (val <= 0) continue;
         const dx = pb[0] - pa[0], dy = pb[1] - pa[1];
         const steps = Math.max(Math.abs(dx) / this.cw, Math.abs(dy) / this.ch, 1);
-        for (let s = 1; s < steps; s++) this.plot(pa[0] + dx * s / steps, pa[1] + dy * s / steps, act > 0.35 ? "∙" : "·", v, act > 0.35 ? K_STATE : K_NET);
+        for (let s = 1; s < steps; s++) {
+          const x = pa[0] + dx * s / steps, y = pa[1] + dy * s / steps;
+          if (inIris(x, y) && (pa[2] + pb[2]) > 0) continue;
+          this.plot(x, y, act > 0.35 ? "∙" : "·", val, act > 0.35 ? K_STATE : K_NET);
+        }
       }
-      // lightning arcs: jagged, bright, gone in a blink
+      // lightning arcs
       for (const arc of this.arcs) {
         for (let k = 0; k < arc.path.length - 1; k++) {
           const a = P[arc.path[k]], b = P[arc.path[k + 1]];
           const steps = Math.max(2, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / this.cw));
           for (let s = 0; s <= steps; s++) {
             const q = s / steps, j = Math.sin(arc.seed + s * 2.7 + t * 40) * this.ch * 0.6 * Math.sin(q * Math.PI);
-            const x = lerp(a[0], b[0], q) - (b[1] - a[1]) / (steps * this.cw) * j, y = lerp(a[1], b[1], q) + j;
-            this.plot(x, y, (s + Math.floor(t * 20)) % 2 ? "╱" : "╲", arc.life * g, arc.life > 0.6 ? K_HI : K_ACC);
+            this.plot(lerp(a[0], b[0], q), lerp(a[1], b[1], q) + j, (s + Math.floor(t * 20)) % 2 ? "╱" : "╲", arc.life * g, arc.life > 0.6 ? K_HI : K_ACC);
           }
         }
       }
-      // signals: bright head, short tail
+      // signals
       for (const q of this.pulses) {
         const a = P[q.from], b = P[q.to];
         for (let k = 0; k < 3; k++) {
           const f = Math.max(0, q.p - k * 0.08);
-          this.plot(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, k ? "·" : "•", (1 - k * 0.32) * q.s * g, k ? K_STATE : K_HI);
+          const x = a[0] + (b[0] - a[0]) * f, y = a[1] + (b[1] - a[1]) * f;
+          if (inIris(x, y)) continue;
+          this.plot(x, y, k ? "·" : "•", (1 - k * 0.32) * q.s * g, k ? K_STATE : K_HI);
         }
       }
-      // neurons: back ones in blue, front ones in the secondary colour, active ones bright
+      // neurons
       this.nodes.forEach((m, i) => {
-        const z = P[i][2], d = depth(z), act = m.act;
+        const z = P[i][2], act = m.act;
+        if (z > -0.2 && inIris(P[i][0], P[i][1])) return;
         const ch = act > 0.55 ? "◉" : act > 0.25 ? "●" : z > 0.35 ? "o" : z > -0.3 ? "∘" : "·";
         const k = act > 0.25 ? K_STATE : z > 0.35 ? K_ACC : K_NET;
-        this.plot(P[i][0], P[i][1], ch, Math.min(1, (0.25 + 0.55 * d + 0.5 * act)) * g, k);
+        this.plot(P[i][0], P[i][1], ch, Math.min(1, (0.25 + 0.55 * depth(z) + 0.5 * act)) * g, k);
       });
 
-      // nucleus: a diamond inside two counter-rotating rings, pulsing with the voice
-      const lvl = st === "speaking" ? this.outS : st === "hearing" ? this.micS * 0.8 : 0;
-      const coreR = R * (0.12 + lvl * 0.1 + 0.01 * Math.sin(t * 2));
-      const spin = st === "thinking" ? 3 : 0.8;
-      this.plot(cx, cy, "◈", 1.05, K_HI);
-      for (let i = 0; i < 6; i++) {
-        const a = i / 6 * Math.PI * 2 + t * spin;
-        this.plot(cx + Math.cos(a) * coreR * 0.55, cy + Math.sin(a) * coreR * 0.55, "•", 0.9 * g, K_STATE);
+      // ---- the eye ---------------------------------------------------------------------
+      const open = this.open == null ? 1 : this.open, pr = this.pupil || 0.15;
+      const ring = (r, glyph, val, key, every = 1.2, from = 0, to = Math.PI * 2) => {
+        const n = Math.max(8, Math.round(r * Rs * Math.abs(to - from) / this.cw * every));
+        for (let i = 0; i < n; i++) {
+          const a = from + (to - from) * i / n;
+          const [x, y] = eyeAt(r, a, open), [x2, y2] = eyeAt(r, a + 0.02, open);
+          const tx = x2 - x, ty = (y2 - y) * this.cw / this.ch, sl = Math.abs(ty) / (Math.abs(tx) + 1e-6);
+          const gl = glyph || (sl > 2.4 ? "│" : sl < 0.42 ? "─" : (tx * ty > 0 ? "╲" : "╱"));
+          this.plot(x, y, gl, val, key);
+        }
+      };
+      // blank the iris so neurons behind don't show through
+      for (let yy = ey - irisR; yy <= ey + irisR; yy += this.ch * 0.5) {
+        for (let xx = ex - irisR; xx <= ex + irisR; xx += this.cw * 0.5) {
+          if (inIris(xx, yy)) this.plot(xx, yy, " ", 0.3, K_DIM);
+        }
       }
-      const cn = Math.max(8, Math.round(coreR * 6.3 / this.cw));
-      for (let i = 0; i < cn; i++) {
-        const a = i / cn * Math.PI * 2 - t * spin * 0.6;
-        this.plot(cx + Math.cos(a) * coreR, cy + Math.sin(a) * coreR, i % 3 ? "·" : "∙", 0.7 * g, K_ACC);
+      if (open < 0.18) {                                      // shut: a single bright lid line
+        for (let a = -1; a <= 1; a += this.cw / (RI * Rs)) {
+          const [x, y] = eyeAt(RI * Math.abs(a) <= RI ? RI * a : 0, 0, 1);
+          this.plot(x, y, "─", 0.95 * g, K_STATE);
+        }
+        this.plot(ex, ey, st === "asleep" ? "◇" : "◈", 0.8 * g, K_HI);
+      } else {
+        ring(RI, null, 1.0 * g, K_STATE, 1.6);                  // limbus: a bright double rim
+        ring(RI * 0.95, "·", 0.7 * g, K_STATE, 1.2);
+        ring(RI * 1.09, "·", 0.38 * g, K_ACC, 0.8);             // outer halo
+        // fibres: radial strands from the pupil to the limbus, each with its own brightness
+        const fibres = small ? 18 : 32;
+        for (let i = 0; i < fibres; i++) {
+          const a = i / fibres * Math.PI * 2 + this.irisSpin;
+          const strength = 0.45 + 0.55 * Math.abs(n2(i * 1.7, 3.1));
+          const r0 = pr * 1.25, r1 = RI * (0.78 + 0.1 * Math.abs(n2(i, 7.7)));
+          const steps = Math.max(2, Math.round((r1 - r0) * Rs / Math.min(this.cw, this.ch) * 1.3));
+          for (let s = 0; s <= steps; s++) {
+            const r = r0 + (r1 - r0) * s / steps;
+            const [x, y] = eyeAt(r, a, open), [x2, y2] = eyeAt(r + 0.02, a, open);
+            const tx = x2 - x, ty = (y2 - y) * this.cw / this.ch, sl = Math.abs(ty) / (Math.abs(tx) + 1e-6);
+            const gl = sl > 2.4 ? "│" : sl < 0.42 ? "─" : (tx * ty > 0 ? "╲" : "╱");
+            const fade = 0.55 + 0.45 * Math.sin(s / steps * Math.PI);
+            this.plot(x, y, gl, strength * fade * 0.85 * g, i % 3 ? K_STATE : K_ACC);
+          }
+        }
+        // collarette: a ragged ring of crypts halfway out
+        const cn = small ? 14 : 26;
+        for (let i = 0; i < cn; i++) {
+          const a = i / cn * Math.PI * 2 - this.irisSpin * 0.6;
+          const [x, y] = eyeAt(pr * 1.25 + (RI - pr) * 0.42 + 0.02 * Math.sin(i * 2.3), a, open);
+          this.plot(x, y, i % 2 ? "∘" : "◦", 0.75 * g, K_HI);
+        }
+        // pupil: an empty ring around the core
+        for (let yy = -pr; yy <= pr; yy += 0.03) for (let xx = -pr; xx <= pr; xx += 0.03) {
+          if (xx * xx + yy * yy < (pr * 0.9) ** 2) {
+            const a = Math.atan2(yy, xx), r = Math.hypot(xx, yy);
+            const [x, y] = eyeAt(r, a, open);
+            this.plot(x, y, " ", 1.15, K_DIM);
+          }
+        }
+        ring(pr, null, 0.95 * g, K_HI, 1.4);
+        // the core: a diamond with a small orbit of sparks inside the pupil
+        const sparks = 6;
+        for (let i = 0; i < sparks; i++) {
+          const a = i / sparks * Math.PI * 2 + t * (st === "thinking" ? 3.2 : 1.1);
+          const [x, y] = eyeAt(pr * 0.55, a, open);
+          this.plot(x, y, i % 2 ? "·" : "•", 1.2, K_STATE);
+        }
+        this.plot(ex, ey, "◈", 1.3, K_HI);
+        // glint: a fixed highlight up and to the left, like light on a lens
+        this.plot(ex - irisR * 0.42, ey - irisR * 0.48, "✦", 1.0 * g, K_HI);
+        this.plot(ex - irisR * 0.3, ey - irisR * 0.62, "·", 0.8 * g, K_HI);
       }
 
       // voice waveform ring
-      const wr = R * 1.16, wsteps = Math.round(wr * 2 * Math.PI / this.cw * 1.1);
+      const lvl = st === "speaking" ? this.outS : st === "hearing" ? this.micS * 0.8 : 0;
+      const wr = R * 1.18, wsteps = Math.round(wr * 2 * Math.PI / this.cw * 1.1);
       for (let i = 0; i < wsteps; i++) {
         const a = i / wsteps * Math.PI * 2;
-        const wave = Math.sin(a * 6 + t * 7) * 0.5 + Math.sin(a * 11 - t * 11) * 0.3 + Math.sin(a * 3 + t * 2.3) * 0.2;
-        const r = wr + wave * lvl * R * 0.28;
-        const quiet = lvl < 0.05;
-        if (quiet && i % 3) continue;
         if (a > Math.PI * 2 * boot) continue;
+        const wave = Math.sin(a * 6 + t * 7) * 0.5 + Math.sin(a * 11 - t * 11) * 0.3 + Math.sin(a * 3 + t * 2.3) * 0.2;
+        const r = wr + wave * lvl * R * 0.28, quiet = lvl < 0.05;
+        if (quiet && i % 3) continue;
         this.plot(cx + Math.cos(a) * r, cy + Math.sin(a) * r, quiet ? "·" : (Math.abs(wave) > 0.6 ? "•" : "∙"),
           (quiet ? 0.22 : 0.55 + lvl * 0.45) * g, quiet ? K_DIM : K_STATE);
       }
-      // voice spectrum: radial bars, outward while speaking, inward while listening
+      // voice spectrum
       if (lvl > 0.03) {
-        const bars = 48, out = st === "speaking";
+        const bars = small ? 32 : 56, out = st === "speaking";
         for (let i = 0; i < bars; i++) {
           const a = i / bars * Math.PI * 2 + this.ring * 0.3;
           const e = 0.35 + 0.65 * Math.abs(n2(i * 0.9, t * (out ? 5 : 3.5)));
-          const len = (0.25 + lvl) * e * R * 0.36, n = Math.max(1, Math.round(len / this.ch * 1.6));
+          const len = (0.25 + lvl) * e * R * 0.3, n = Math.max(1, Math.round(len / this.ch * 1.6));
           for (let s = 0; s < n; s++) {
             const r = out ? wr + R * 0.07 + s * len / n : wr - R * 0.07 - s * len / n;
-            const v = (0.9 - s / n * 0.6) * g;
             const hot = out && e > 0.85 && s === n - 1;
-            this.plot(cx + Math.cos(a) * r, cy + Math.sin(a) * r, s === n - 1 ? "▪" : this.radial(a), v, hot ? K_HOT : K_STATE);
+            this.plot(cx + Math.cos(a) * r, cy + Math.sin(a) * r, s === n - 1 ? "▪" : this.radial(a), (0.9 - s / n * 0.6) * g, hot ? K_HOT : K_STATE);
           }
         }
       }
-
-      // HUD ring 1: three rotating arcs that breathe, with bright end caps
-      const r1 = R * 1.34;
+      // HUD ring 1: three breathing arcs with end caps
+      const r1 = R * 1.32;
       for (let s = 0; s < 3; s++) {
         const a0 = this.ring * 1.3 + s * Math.PI * 2 / 3;
         const span = Math.PI * (st === "thinking" ? 0.42 : 0.32) * (0.85 + 0.15 * Math.sin(t * 0.9 + s * 2)) * boot;
         this.circle(cx, cy, r1, a0, a0 + span, null, 0.62 * g, K_STATE);
         this.plot(cx + Math.cos(a0 + span) * r1, cy + Math.sin(a0 + span) * r1, "◆", 0.95 * g, K_HI);
       }
-      // HUD ring 2: ticks, counter-rotating, degree markers every 45°
-      const r2 = R * 1.52, n2t = 72;
+      // HUD ring 2: ticks
+      const r2 = R * 1.46, n2t = small ? 48 : 96;
       for (let i = 0; i < n2t * boot; i++) {
-        const a = i / n2t * Math.PI * 2 - this.ring * 0.7;
-        const major = i % 6 === 0;
+        const a = i / n2t * Math.PI * 2 - this.ring * 0.7, major = i % 6 === 0;
         this.plot(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2, major ? "+" : "·", (major ? 0.5 : 0.24) * g, major ? K_STATE : K_DIM);
-        if (i % 9 === 0 && boot >= 1) {
-          const deg = String(Math.round(((a * 180 / Math.PI) % 360 + 360) % 360)).padStart(3, "0");
-          const lr = r2 + this.cw * 2.8, lx = cx + Math.cos(a) * lr, ly = cy + Math.sin(a) * lr;
-          if (Math.abs(Math.cos(a)) < 0.92) this.text(lx - this.cw * 1.5, ly - this.ch * 0.5, deg, 0.55 * g, K_DIM, true);
-        }
       }
-      // thinking: a scanning sweep with a fading wake
       if (st === "thinking" || st === "booting") {
-        const a = t * 2.4;
         for (let k = 0; k < 14; k++) {
-          const aa = a - k * 0.045;
+          const aa = t * 2.4 - k * 0.045;
           this.plot(cx + Math.cos(aa) * r2, cy + Math.sin(aa) * r2, k ? "·" : "◆", (1 - k * 0.065) * g, k ? K_ACC : K_HI);
         }
       }
-      // satellites on the rings, with trails
-      for (const s of this.sats) {
-        const rr = R * s.ring;
-        for (let k = 0; k < 7; k++) {
-          const a = s.a - k * 0.04 * Math.sign(s.speed);
-          this.plot(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, k ? "·" : "●", (k ? 0.5 - k * 0.06 : 0.95) * g * boot, k ? K_ACC : K_PURPLE);
-        }
-      }
-      // ripples and state-change shockwaves
+      // ripples and shockwaves
       for (const rp of this.ripples) {
         const rr = R * rp.r, n3 = Math.round(rr * 2 * Math.PI / this.cw / (rp.wave ? 1.1 : 1.6));
         for (let i = 0; i < n3; i++) {
-          const a = i / n3 * Math.PI * 2;
-          this.plot(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, rp.wave ? "∙" : "·",
-            rp.life * (rp.wave ? 0.8 : 0.3 + rp.s * 0.6) * g, rp.wave && rp.life > 0.7 ? K_HI : K_STATE);
+          const a = i / n3 * Math.PI * 2, x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+          if (inIris(x, y)) continue;
+          this.plot(x, y, rp.wave ? "∙" : "·", rp.life * (rp.wave ? 0.8 : 0.3 + rp.s * 0.6) * g, rp.wave && rp.life > 0.7 ? K_HI : K_STATE);
         }
       }
-      // tool probes: a beam from the nucleus, a marker at the ring, and what it's doing
-      for (const pr of this.probes) {
-        const e = ease(pr.p), rr = R * 1.52 * e;
-        const ca = Math.cos(pr.angle), sa = Math.sin(pr.angle);
+      // tool probes: a beam from the eye to the ring, labelled in full view
+      for (const pq of this.probes) {
+        const e = ease(pq.p), rr = R * 1.46 * e, ca = Math.cos(pq.angle), sa = Math.sin(pq.angle);
         const n = Math.max(2, Math.round(rr / this.cw));
         for (let i = 1; i < n; i++) {
-          const q = i / n, flick = (Math.floor(t * 14) + i) % 3 === 0;
-          this.plot(cx + ca * rr * q, cy + sa * rr * q, flick ? "•" : "·", (0.35 + 0.4 * q) * g, K_STATE);
+          const q = i / n, x = lerp(ex, cx + ca * rr, q), y = lerp(ey, cy + sa * rr, q);
+          if (inIris(x, y)) continue;
+          this.plot(x, y, (Math.floor(t * 14) + i) % 3 === 0 ? "•" : "·", (0.35 + 0.4 * q) * g, K_STATE);
         }
         const hx = cx + ca * rr, hy = cy + sa * rr;
         this.plot(hx, hy, "◆", 1.1, K_HI);
-        if (pr.p > 0.85) {
-          this.circle(cx, cy, R * 1.52, pr.angle - 0.14, pr.angle + 0.14, "━", 1.05 * g, K_HI);
-          const label = ` [ ${pr.tag}${pr.detail ? " · " + pr.detail : ""} ] `;
-          const lx = hx - label.length * this.cw / 2;
-          this.text(Math.max(0, Math.min(W - label.length * this.cw, lx)), hy - this.ch * 1.6, this.scrambled(label, pr.t0 + 0.4), 1.2, K_STATE, true);
+        if (pq.p > 0.85) {
+          this.circle(cx, cy, R * 1.46, pq.angle - 0.14, pq.angle + 0.14, "━", 1.05 * g, K_HI);
+          if (!small) {
+            const label = ` [ ${pq.tag}${pq.detail ? " · " + pq.detail : ""} ] `;
+            const lx = hx - label.length * this.cw / 2;
+            this.text(Math.max(0, Math.min(W - label.length * this.cw, lx)), hy - this.ch * 1.6, this.scrambled(label, pq.t0 + 0.4), 1.2, K_STATE, true);
+          }
         }
       }
 
-      // HUD labels and corner readouts
-      const r4 = R * 1.72;
-      const top = "◢ I R I S ◣";
-      const flick = Math.random() < 0.004 ? 0.4 : 1;           // an occasional flicker, like a real HUD
-      this.text(cx - top.length * this.cw / 2, cy - r4 - this.ch * 0.5, top, 0.85 * Math.max(g, 0.6) * flick, K_STATE);
-      const label = this.scrambled(LABELS[st] || st.toUpperCase(), this.stateT);
-      this.text(cx - label.length * this.cw / 2, cy + r4 - this.ch * 0.2, label, 0.8 * Math.max(g, 0.6), K_STATE, true);
-      if (this.sub) this.text(cx - this.sub.length * this.cw / 2, cy + r4 + this.ch * 0.9, this.sub, 0.45, K_DIM);
-      const meter = (v) => "▮".repeat(Math.round(clamp(v, 0, 1) * 8)).padEnd(8, "▯");
-      const left = `MIC ${meter(this.micS)}`, right = `OUT ${meter(this.outS)}`;
-      this.text(cx - r4 - left.length * this.cw, cy - this.ch / 2, left, 0.45, this.micS > 0.05 ? K_STATE : K_DIM);
-      this.text(cx + r4 + this.cw, cy - this.ch / 2, right, 0.45, this.outS > 0.05 ? K_STATE : K_DIM);
-      // corner brackets with small readouts
-      const bx = r4 + this.cw * 5, by = r4 * 0.9;
-      [[-1, -1, "┌"], [1, -1, "┐"], [-1, 1, "└"], [1, 1, "┘"]].forEach(([sx, sy, c]) => this.plot(cx + sx * bx, cy + sy * by, c, 0.45, K_DIM));
-      if (bx > this.cw * 18 && W > 520) {
+      this.title = null;
+      if (!small) {
+        // labels and read-outs live at the edges, well away from the eye
+        this.title = { y: this.ch * 1.2 };
+        const label = this.scrambled(LABELS[st] || st.toUpperCase(), this.stateT);
+        // state label above the caption line (the page shows live captions at the very bottom)
+        this.text(cx - label.length * this.cw / 2, H - this.ch * 4.4, label, 0.85 * Math.max(g, 0.6), K_STATE, true);
+        if (this.sub) this.text(cx - this.sub.length * this.cw / 2, H - this.ch * 3.3, this.sub, 0.45, K_DIM);
+        const meter = (x) => "▮".repeat(Math.round(clamp(x, 0, 1) * 8)).padEnd(8, "▯");
+        const left = `MIC ${meter(this.micS)}`, right = `OUT ${meter(this.outS)}`;
+        this.text(this.cw * 2, cy - this.ch / 2, left, 0.5, this.micS > 0.05 ? K_STATE : K_DIM);
+        this.text(W - (right.length + 2) * this.cw, cy - this.ch / 2, right, 0.5, this.outS > 0.05 ? K_STATE : K_DIM);
+        const x0 = this.cw * 2, x1 = W - this.cw * 2, y0 = this.ch * 1.2, y1 = H - this.ch * 1.6;
+        [[x0 - this.cw, y0 - this.ch * 0.6, "┌"], [x1, y0 - this.ch * 0.6, "┐"], [x0 - this.cw, y1 + this.ch * 0.4, "└"], [x1, y1 + this.ch * 0.4, "┘"]]
+          .forEach(([x, y, c]) => this.plot(x, y, c, 0.45, K_DIM));
         const act = this.nodes.reduce((a, m) => a + m.act, 0) / this.nodes.length;
-        const lines = {
-          tl: ["CORE", `NODES ${this.nodes.length}  SYN ${this.edges.length}`, `SIG ${String(this.pulses.length).padStart(3, "0")}  ACT ${String(Math.round(act * 100)).padStart(2, "0")}%`],
-          tr: [this.meta.model ? String(this.meta.model).slice(0, 22) : "MODEL —", this.meta.tok_s ? `${Math.round(this.meta.tok_s)} TOK/S` : "", this.meta.first_audio ? `1ST SOUND ${this.meta.first_audio.toFixed(2)}S` : ""],
-          bl: [`ROT ${((this.rot * 57.3) % 360).toFixed(0).padStart(3, "0")}°  TILT ${(this.tilt * 57.3).toFixed(0)}°`, `${Math.round(this.fps)} FPS`],
-          br: [this.meta.turns != null ? `TURNS ${this.meta.turns}` : "", new Date().toTimeString().slice(0, 8)],
-        };
-        const put = (arr, x0, y0, alignRight, down) => arr.filter(Boolean).forEach((s, i) => {
-          const y = y0 + (down ? i : -i) * this.ch;
-          this.text(alignRight ? x0 - s.length * this.cw : x0, y, s, i === 0 ? 0.42 : 0.3, i === 0 && !alignRight ? K_STATE : K_DIM);
+        const put = (arr, x, y, right, down) => arr.filter(Boolean).forEach((s, i) => {
+          this.text(right ? x - s.length * this.cw : x, y + (down ? i : -i) * this.ch, s, i === 0 ? 0.45 : 0.32, i === 0 ? K_STATE : K_DIM);
         });
-        put(lines.tl, cx - bx + this.cw * 1.5, cy - by + this.ch * 0.6, false, true);
-        put(lines.tr, cx + bx - this.cw * 0.5, cy - by + this.ch * 0.6, true, true);
-        put(lines.bl.slice().reverse(), cx - bx + this.cw * 1.5, cy + by - this.ch * 1.2, false, false);
-        put(lines.br.slice().reverse(), cx + bx - this.cw * 0.5, cy + by - this.ch * 1.2, true, false);
+        put(["CORE", `NODES ${this.nodes.length}  SYN ${this.edges.length}`,
+             `SIG ${String(this.pulses.length).padStart(3, "0")}  ACT ${String(Math.round(act * 100)).padStart(2, "0")}%`,
+             `GAZE ${(gy * 57.3).toFixed(0).padStart(3)}° ${(gp * 57.3).toFixed(0).padStart(3)}°`], x0, y0 + this.ch, false, true);
+        put([this.meta.model ? String(this.meta.model).slice(0, 24) : "MODEL —", this.meta.tok_s ? `${Math.round(this.meta.tok_s)} TOK/S` : "",
+             this.meta.first_audio ? `1ST SOUND ${this.meta.first_audio.toFixed(2)}S` : ""], x1, y0 + this.ch, true, true);
+        put([`${Math.round(this.fps)} FPS`, `ROT ${((this.rot * 57.3) % 360).toFixed(0).padStart(3, "0")}°  TILT ${(this.tilt * 57.3).toFixed(0)}°`], x0, y1 - this.ch, false, false);
+        put([new Date().toTimeString().slice(0, 8), this.meta.turns != null ? `TURNS ${this.meta.turns}` : ""], x1, y1 - this.ch, true, false);
       }
       this.render();
+    }
+
+    // the title is drawn as real text (exactly centred) with two vector triangles placed
+    // symmetrically: the font's ◢ ◣ glyphs sit unevenly in their cells
+    drawTitle(ctx) {
+      if (!this.title) return;
+      const c = this.col[1], s = "I  R  I  S";
+      ctx.save();
+      ctx.font = `600 ${Math.round(this.ch * 0.95)}px "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      // space the triangles from the ink, not the text box: "I" is narrow, "S" is wide
+      const m = ctx.measureText(s), x = this.W / 2, y = this.title.y, tri = this.ch * 0.6, gap = this.cw * 1.6;
+      const inkL = x - (m.actualBoundingBoxLeft || m.width / 2), inkR = x + (m.actualBoundingBoxRight || m.width / 2);
+      const flick = Math.random() < 0.004 ? 0.45 : 0.9;
+      ctx.fillStyle = `rgba(${c.map(Math.round).join(",")},${flick})`;
+      ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 8;
+      ctx.fillText(s, x, y);
+      const l = inkL - gap, r = inkR + gap, b = y + tri / 2, tp = y - tri / 2;
+      ctx.beginPath(); ctx.moveTo(l, b); ctx.lineTo(l, tp); ctx.lineTo(l - tri, b); ctx.closePath(); ctx.fill();   // ◢
+      ctx.beginPath(); ctx.moveTo(r, b); ctx.lineTo(r, tp); ctx.lineTo(r + tri, b); ctx.closePath(); ctx.fill();   // ◣
+      ctx.restore();
     }
 
     // -- colour --------------------------------------------------------------------------
@@ -551,6 +670,7 @@
       }
       const ox = (this.W - cols * this.cw) / 2, oy = (this.H - this.rows * this.ch) / 2;
       const glowOn = this.state !== "asleep";
+      this.drawTitle(ctx);
       buckets.forEach((cells, key) => {
         const k = key >> 4, lvl = key & 15;
         const col = this.color(k, lvl);

@@ -76,10 +76,12 @@ While talking:
 With a headset add `--headset` (or `audio: {headset: true}` in pod.yaml): IRIS keeps listening while she talks, so you can just talk over her to interrupt. With speakers leave it off, or she'd hear herself.
 
 **Web UI** (`iris talk --ui`, or `iris ui`): opens in your browser (local only, per-session token).
-A JARVIS-style ASCII neural core (a rotating 3D cloud of neurons with travelling signals inside
-HUD rings and a circular voice waveform) that changes with listening / thinking / speaking /
-asleep, leans toward your pointer, spins when dragged and zooms on scroll; `f` or double-click makes it full screen with live
-captions (Esc leaves); live transcript (dim while generated, bright as spoken)
+A JARVIS-style ASCII neural eye: a rotating 3D cloud of neurons with an iris on its surface
+(radial fibres, a double rim, a hollow pupil around the ◈ core) that looks around, dilates
+with voices, blinks like a shutter, and reacts to listening / thinking / speaking / asleep,
+inside HUD rings with a voice waveform and spectrum. The dashboard shows it small at the top
+right; **⛶ FULL VIEW** (or `f`, or double-click) opens the big one with read-outs and live
+captions (Esc leaves). Drag spins it, scroll zooms. Also: live transcript (dim while generated, bright as spoken)
 with one-click ratings; a per-turn latency waterfall (STT / LLM / generation / TTS / playback)
 against your target; vitals vs targets; GPU and Ollama status; your lists; findings; voice
 sliders; background-job controls; the morning report; a HISTORY tab with every past

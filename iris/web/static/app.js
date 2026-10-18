@@ -349,12 +349,15 @@
   function solo(on) {
     on = on ?? !document.body.classList.contains("solo");
     document.body.classList.toggle("solo", on);
+    core.setCompact(!on);                     // the big HUD only in full view; a small eye on the dashboard
     try {
       if (on && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
       if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
     } catch (e) { /* the CSS mode works without the Fullscreen API */ }
   }
-  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) document.body.classList.remove("solo"); });
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement && document.body.classList.contains("solo")) { document.body.classList.remove("solo"); core.setCompact(true); }
+  });
   $("#solo").addEventListener("click", () => solo());
   $("#core").addEventListener("dblclick", () => solo());
   document.addEventListener("keydown", (ev) => {
@@ -378,6 +381,8 @@
     if (s !== S.state) {
       S.state = s;
       document.title = `IRIS · ${LABEL[s] || s}`;
+      $("#mini-state").textContent = LABEL[s] || s.toUpperCase();
+      $("#mini-state").className = `mini-state ${s}`;
       if (s !== "thinking") { S.tokens = 0; core.sub = ""; }
     }
     core.setState(s);
@@ -464,7 +469,8 @@
     }, 90);
   }
 
-  if (qs.get("solo") === "1") document.body.classList.add("solo");   // open straight into full screen
+  if (qs.get("solo") === "1") document.body.classList.add("solo");   // open straight into full view
+  core.setCompact(!document.body.classList.contains("solo"));
   if (qs.get("tab")) setTimeout(() => { const b = document.querySelector(`.tabs button[data-tab="${qs.get("tab")}"]`); if (b) b.click(); }, 50);
   if (DEMO) demo();
   // dev: ?ff=N fast-forwards the core N frames (headless browsers barely run animation frames)
