@@ -48,8 +48,9 @@ class ToolRun:
 
 
 def registry(settings=None) -> dict[str, Tool]:
-    from . import calc, clock, lists_tool, web
-    all_tools = {t.name: t for t in (web.tool(settings), calc.TOOL, clock.TOOL, lists_tool.ADD, lists_tool.SHOW)}
+    from . import calc, clock, lists_tool, lookup, web
+    all_tools = {t.name: t for t in (web.tool(settings), calc.TOOL, clock.TOOL, lists_tool.ADD, lists_tool.SHOW,
+                                     lookup.WIKIPEDIA, lookup.EXCHANGE, lookup.WEATHER)}
     cfg = ((settings.pod.get("tools") or {}) if settings is not None else {}) or {}
     enabled = cfg.get("enabled")
     if enabled is None:

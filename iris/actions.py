@@ -150,6 +150,7 @@ NOTES = {
     "search": "I did not actually run a search this turn; no tool was called.",
     "list": "I did not actually add anything to a list this turn; no tool was called.",
     "voice": "My voice settings did not change this turn; I can't change how I sound by promising to.",
+    "number": "Some figures in my last answer were not in the tool result, so they may be wrong; I should read the figures exactly as the tool gave them.",
     "pronounce": "I did not change how I pronounce anything this turn; no pronunciation was saved. "
                  "The user can teach me by saying: the word X is pronounced Y.",
 }
@@ -163,8 +164,28 @@ def announces_search(reply: str) -> bool:
     return bool(_ANNOUNCE.search(r))
 
 
-def false_claims(reply: str, tools_run: list[str], user_text: str = "") -> list[str]:
-    """Kinds of action the reply claims although nothing did it: search | list | voice."""
+GROUNDED = ("exchange_rate", "weather")          # tools whose figures must come out of the tool, not the model
+_FIGURE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def ungrounded_numbers(reply: str, grounding: str) -> list[str]:
+    """Figures in `reply` that appear nowhere in the tool output they should come from (within 2%, since
+    "about 18 rand" for 17.84 is fine). Single digits are ignored ("one", "2 days")."""
+    have = [float(x) for x in (m.replace(",", "") for m in _FIGURE.findall(grounding)) if x not in ("", ".")]
+    bad = []
+    for raw in _FIGURE.findall(reply):
+        txt = raw.replace(",", "").rstrip(".")
+        if len(txt.replace(".", "")) < 2:
+            continue
+        v = float(txt)
+        if not any(abs(v - h) <= 0.02 * max(abs(h), 1e-9) or abs(v - h) < 0.51 for h in have):
+            bad.append(raw)
+    return bad
+
+
+def false_claims(reply: str, tools_run: list[str], user_text: str = "", grounding: str = "") -> list[str]:
+    """Kinds of action the reply claims although nothing did it: search | list | voice | pronounce,
+    plus "number" when figures from a rate/weather tool were changed or invented."""
     out = []
     ran = set(tools_run)
     for kind, rx in _CLAIMS.items():
@@ -175,6 +196,8 @@ def false_claims(reply: str, tools_run: list[str], user_text: str = "") -> list[
         if kind == "list" and ({"add_to_list", "show_list"} & ran):
             continue
         out.append(kind)
+    if grounding and ungrounded_numbers(reply, grounding):
+        out.append("number")
     return out
 
 

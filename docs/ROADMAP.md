@@ -115,6 +115,12 @@ ratings, so lessons that don't help get pruned.
 
 ## Done
 
+- 2026-10-18 (feat/lookup-tools, from session 174811-38a0):
+  - **Exact lookups** (`iris/lookups.py`, `iris/tools/lookup.py`): Wikipedia lead paragraph read verbatim,
+    exchange rates (also from garbled "You what the current exchange it is from rands to dollars"), weather and
+    forecast, unit conversions, other time zones. Answered by code like the fast path; failures are spoken, not
+    invented. Tools `wikipedia`, `exchange_rate`, `weather` for the model's own calls; figures the model
+    changes are flagged (`false_claim: number`).
 - 2026-10-18 (fix/voice-consistency, from session 174811-38a0):
   - **One voice**: the per-sentence pitch drift (up to +-1.5 semitones, questions lifted) is gone; only a
     capped pace variation (+-3%) remains. Measured on real Kokoro audio: sentence-to-sentence median F0

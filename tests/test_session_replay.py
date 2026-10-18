@@ -300,3 +300,155 @@ def test_phoneme_markup_is_not_read_as_a_delivery_cue():
 
 def test_promising_to_pronounce_tells_the_model_how_it_is_really_done():
     assert "the word X is pronounced Y" in actions.NOTES["pronounce"]
+
+
+# -- B3: exact lookups (session 174811: invented Wikipedia paragraph, wrong exchange rate) ---------------
+import datetime as _dt  # noqa: E402
+
+from iris import lookups  # noqa: E402
+from iris.tools import lookup  # noqa: E402
+
+WIKI_EXTRACT = ("Cumin is a flowering plant in the family Apiaceae, native to the Irish Sea region. Its seeds are used "
+                "in the cuisines of many cultures. It is the second most popular spice in the world after black pepper.")
+
+
+def fake_net(monkeypatch, fail=False, calls=None):
+    def get(url, timeout=8.0):
+        if calls is not None:
+            calls.append(url)
+        if fail:
+            raise lookup.LookupError_("I couldn't reach the service just now.")
+        if "opensearch" in url:
+            return ["cumin", ["Cumin"], [""], ["https://en.wikipedia.org/wiki/Cumin"]]
+        if "rest_v1/page/summary/Cumin" in url:
+            return {"type": "standard", "title": "Cumin", "extract": WIKI_EXTRACT}
+        if "open.er-api.com/v6/latest/ZAR" in url:
+            return {"result": "success", "time_last_update_utc": "Sun, 18 Oct 2026 00:02:31 +0000", "rates": {"USD": 0.06085, "EUR": 0.054}}
+        if "open.er-api.com/v6/latest/USD" in url:
+            return {"result": "success", "time_last_update_utc": "Sun, 18 Oct 2026 00:02:31 +0000", "rates": {"ZAR": 16.43}}
+        if "open.er-api.com/v6/latest/EUR" in url:
+            return {"result": "success", "time_last_update_utc": "Sun, 18 Oct 2026 00:02:31 +0000", "rates": {"GBP": 0.87}}
+        if "geocoding-api" in url:
+            return {"results": [{"name": "Cape Town", "latitude": -33.9, "longitude": 18.4, "country": "South Africa",
+                                 "country_code": "ZA", "timezone": "Africa/Johannesburg"}]}
+        if "api.open-meteo.com" in url:
+            return {"current": {"temperature_2m": 13.4, "apparent_temperature": 10.8, "weather_code": 0, "wind_speed_10m": 12.0},
+                    "daily": {"temperature_2m_max": [16.9, 18.3], "temperature_2m_min": [9.2, 10.1],
+                              "precipitation_probability_max": [5, 20], "weather_code": [0, 3]}}
+        return None
+    monkeypatch.setattr(lookup, "_get_json", get)
+
+
+def test_wikipedia_paragraph_is_read_verbatim_without_the_model(monkeypatch):
+    fake_net(monkeypatch)
+    c = conv("INVENTED PARAGRAPH")
+    r = c.respond("Read me a paragraph from Wikipedia on cumin.", speak=False)
+    assert r.spoken.startswith("From the Wikipedia article on Cumin: Cumin is a flowering plant")
+    assert "second most popular spice" in r.spoken and "INVENTED" not in r.spoken
+    assert c.llm.calls == [] and r.record["fastpath"] == "wikipedia"
+
+
+def test_exchange_rate_comes_from_the_service_not_the_model(monkeypatch):
+    fake_net(monkeypatch)
+    assert lookups.answer("What's the rand to dollar rate?") == (
+        "currency", "One rand is 0.06085 US dollars, and one US dollar is 16.43 rand. Rates are from the 18th of October.")
+    assert lookups.answer("what is 100 dollars in rand")[1].startswith("100 US dollars is 1,643 rand")
+    assert lookups.answer("You what the current exchange rate is from rands to dollars")[1].startswith("One rand is 0.06085")
+
+
+def test_a_failed_lookup_is_said_not_made_up(monkeypatch):
+    fake_net(monkeypatch, fail=True)
+    c = conv("It's about 20 rand.")
+    for said in ("what's the rand to dollar rate", "weather in Cape Town", "read a paragraph from wikipedia on cumin"):
+        assert c.respond(said, speak=False).spoken == "I couldn't reach the service just now."
+    assert c.llm.calls == []
+
+
+def test_weather_is_exact_and_beats_the_web_search(monkeypatch):
+    calls = []
+    fake_net(monkeypatch, calls=calls)
+    c = conv("never used")
+    r = c.respond("what's the weather like in Cape Town?", speak=False)
+    assert r.spoken == ("Right now in Cape Town it's 13 degrees and clear, feels like 11, wind 12 kilometres per hour. "
+                        "Today: high 17, low 9, 5 percent chance of rain.")
+    assert lookups.answer("weather in Cape Town tomorrow")[1] == "Tomorrow in Cape Town: overcast, between 10 and 18 degrees, with a 20 percent chance of rain."
+    assert c.llm.calls == [] and r.record["forced"] is None
+
+
+def test_weather_without_a_place_asks_instead_of_guessing(monkeypatch):
+    fake_net(monkeypatch)
+    assert lookups.answer("what's the weather?")[1].startswith("Which place?")
+    s = Settings.load()
+    s.pod["location"] = "Cape Town"
+    assert lookups.answer("what's the weather today", s)[1].startswith("Right now in Cape Town")
+
+
+@pytest.mark.parametrize("said, out", [
+    ("convert 5 km to miles", "5 kilometres is about 3.11 miles."),
+    ("how many feet are in a mile", "1 mile is 5,280 feet."),
+    ("what's 20 celsius in fahrenheit", "20 degrees Celsius is 68 degrees Fahrenheit."),
+    ("what is a hundred pounds in kilograms", "100 pounds is about 45.36 kilograms."),
+    ("ten miles in kilometres", "10 miles is about 16.09 kilometres."),
+])
+def test_unit_conversions_are_computed(said, out):
+    assert lookups.answer(said) == ("units", out)
+
+
+def test_time_in_another_city_is_computed():
+    now = _dt.datetime(2026, 10, 18, 17, 58, tzinfo=_dt.timezone.utc)
+    assert lookups.time_in("what time is it in Tokyo", now) == "In Tokyo it's 2:58 in the morning."
+    assert lookups.time_in("what's the time in New York?", now) == "In New York it's 1:58 in the afternoon."
+
+
+@pytest.mark.parametrize("said", [
+    "convert 3 apples to oranges", "what time does the game in Tokyo start", "tell me about Tokyo", "17 times 23",
+    "read me a paragraph about dogs", "how is the weather affecting my mood", "what is 5 pounds",
+    "I paid 20 dollars in tax", "is cumin in the spice rack",
+])
+def test_ordinary_requests_are_left_to_the_model(said, monkeypatch):
+    fake_net(monkeypatch)
+    assert lookups.answer(said) is None or said == "17 times 23"        # 17 x 23 belongs to the maths fast path
+
+
+def test_the_model_can_call_the_lookup_tools_too(monkeypatch):
+    from iris import tools as tool_mod
+    fake_net(monkeypatch)
+    reg = tool_mod.registry(Settings.load())
+    assert {"wikipedia", "exchange_rate", "weather"} <= set(reg)
+    tool, args = tool_mod.parse_text_call("<<rate: 100 USD to ZAR>>", reg)
+    assert tool_mod.run(tool, args).result.startswith("100 USD is 1,643 ZAR")
+    assert tool_mod.run(reg["weather"], {"place": "Cape Town"}).result.startswith("Right now in Cape Town")
+
+
+def test_figures_the_model_changed_are_flagged():
+    tool_says = "One rand is 0.06085 US dollars, and one US dollar is 16.43 rand."
+    assert actions.ungrounded_numbers("A dollar is about 16 rand.", tool_says) == []
+    assert actions.ungrounded_numbers("A dollar is 18.9 rand.", tool_says) == ["18.9"]
+    assert actions.false_claims("That is 25 rand.", ["exchange_rate"], "", tool_says) == ["number"]
+    assert actions.false_claims("That is 16.43 rand.", ["exchange_rate"], "", tool_says) == []
+
+
+def test_wikipedia_text_is_made_readable_aloud():
+    raw = ("The Kalahari Desert is a large semiarid savanna covering 900,000\xa0km2 (350,000\xa0sq\xa0mi), including much of "
+           "Botswana (/bɒtˈswɑːnə/), as well as parts of Namibia.")
+    assert lookup.speakable(raw) == ("The Kalahari Desert is a large semiarid savanna covering 900,000 square kilometres, "
+                                     "including much of Botswana, as well as parts of Namibia.")
+
+
+def test_one_dropped_connection_is_retried(monkeypatch):
+    import urllib.request
+    attempts = []
+
+    class R:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"ok": 1}'
+
+    def urlopen(req, timeout=0):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError("connection reset")
+        return R()
+    monkeypatch.delenv("IRIS_OFFLINE", raising=False)
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    assert lookup._get_json("https://example.invalid/x") == {"ok": 1} and len(attempts) == 2
