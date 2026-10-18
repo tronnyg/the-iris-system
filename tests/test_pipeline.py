@@ -123,3 +123,58 @@ def test_history_is_trimmed_in_blocks_so_the_prompt_prefix_stays_cacheable(fake_
 def test_tone_engine_produces_audio():
     a = ToneEngine().synth("hello there world")
     assert isinstance(a, np.ndarray) and len(a) > 1000
+
+
+def test_leaked_reasoning_is_never_spoken_and_a_clean_model_takes_over(fake_llm):
+    """A model that writes its chain of thought as the reply: nothing of it is spoken, the
+    turn is answered again by a clean installed model, and the leaky one is remembered."""
+    from iris.config import Settings
+    from iris.memory import Memory
+    from iris.pipeline import LEAK_NOTICE, Conversation, model_traits
+    from iris.trace import TraceWriter, turns
+
+    class TwoModels(fake_llm):
+        installed = ["leaky:4b", "clean:4b"]
+
+        def installed_models(self):
+            return list(self.installed)
+
+        def stream(self, messages, options=None, cancel=None, stats=None, think=False, fmt=None):
+            self.calls.append(self.model)
+            text = ("Okay, the user is asking what two plus two is. Let me think." if self.model == "leaky:4b"
+                    else "The answer is four.")
+            if stats is not None:
+                stats.done_reason = "stop"
+            for i in range(0, len(text), 5):
+                yield text[i:i + 5]
+
+    llm = TwoModels(model="leaky:4b")
+    said = []
+    c = Conversation(Settings.load(), llm, None, None, TraceWriter(), Memory(), on_text=said.append)
+    r = c.respond("what is two plus two?", speak=False)
+    assert r.spoken == "The answer is four." and said == ["The answer is four."]
+    assert llm.calls == ["leaky:4b", "clean:4b"] and llm.model == "clean:4b"
+    assert model_traits("leaky:4b")["leaks"] and r.record["turn"] == 1 and len(turns()) == 1
+    # next session starts on the clean model straight away
+    llm2 = TwoModels(model="leaky:4b")
+    Conversation(Settings.load(), llm2, None, None, TraceWriter(), Memory())
+    assert llm2.model == "clean:4b"
+    # nothing to fall back to: a short honest notice instead of the reasoning
+    llm3 = TwoModels(model="leaky:4b")
+    llm3.installed = ["leaky:4b"]
+    said3 = []
+    c3 = Conversation(Settings.load(), llm3, None, None, TraceWriter(), Memory(), on_text=said3.append)
+    assert c3.respond("hi", speak=False).spoken == LEAK_NOTICE and said3 == [LEAK_NOTICE]
+
+
+def test_normal_replies_pass_the_leak_guard(fake_llm):
+    from iris.config import Settings
+    from iris.memory import Memory
+    from iris.pipeline import Conversation, LeakGuard
+    from iris.trace import TraceWriter
+    for text in ("Okay, here it is: four.", "Sure! Tokyo is the capital of Japan.", "Hi.", "<<search: weather>>"):
+        g = LeakGuard()
+        verdicts = [g.feed(text[i:i + 4])[1] for i in range(0, len(text), 4)]
+        assert "leak" not in verdicts, text
+    r = Conversation(Settings.load(), fake_llm("Four."), None, None, TraceWriter(), Memory()).respond("2+2?", speak=False)
+    assert r.spoken == "Four."

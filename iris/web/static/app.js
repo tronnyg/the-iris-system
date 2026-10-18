@@ -5,7 +5,7 @@
   const qs = new URLSearchParams(location.search);
   const TOKEN = qs.get("token") || "";
   const DEMO = qs.get("demo") === "1";
-  const face = new window.IrisFace($("#face"));
+  const core = new window.IrisCore($("#core"));
   const S = { info: {}, targets: {}, turns: [], cur: null, tokens: 0, lastTurn: 0, state: "booting", ended: false };
 
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -34,6 +34,7 @@
     if (DEMO) c.unshift(["DEMO", false]);
     $("#chips").innerHTML = c.map(([t, on]) => `<span class="chip ${on ? "on" : ""}">${esc(t)}</span>`).join("");
     $("#name").textContent = (i.name || "IRIS").toUpperCase();
+    core.meta = { ...core.meta, model: (i.models || {}).llm || core.meta.model };
     $("#persona").textContent = i.persona ? `/ ${i.persona}` : "";
     $("#session").textContent = i.session ? `session ${i.session}` : "";
   }
@@ -65,6 +66,14 @@
     return S.cur;
   }
   function closeIris() { if (S.cur) S.cur.done = true; }
+  let capT = null;
+  function caption(text, you) {
+    const c = $("#caption");
+    c.textContent = you ? `› ${text}` : text;
+    c.className = `caption on${you ? " you" : ""}`;
+    clearTimeout(capT);
+    capT = setTimeout(() => { c.className = "caption"; }, you ? 4000 : 6000);
+  }
   function onSay(text) {
     const e = irisEntry();
     const span = document.createElement("span");
@@ -78,6 +87,7 @@
     if (!e) return;
     const c = e.chunks.find((x) => !x.spoken && x.text.trim() === String(text).trim()) || e.chunks.find((x) => !x.spoken);
     if (c) { c.spoken = true; c.span.className = "spoken"; }
+    caption(String(text));
   }
   function sysline(text) {
     stick(() => {
@@ -102,6 +112,8 @@
       ["good", "ok", "bad"].map((v) => `<button data-v="${v}" title="rate ${v}">${{ good: "+", ok: "=", bad: "−" }[v]}</button>`).join("") + "</span>";
     e.done = true;
     S.lastTurn = t.turn || S.lastTurn;
+    core.meta = { ...core.meta, model: (t.llm && t.llm.model) || core.meta.model, tok_s: t.llm && t.llm.tok_s,
+                  first_audio: t.timing && t.timing.first_audio, turns: (core.meta.turns || 0) + 1 };
     S.turns.push(t);
     S.turns = S.turns.slice(-10);
     latency();
@@ -239,7 +251,71 @@
   document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
     document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === b));
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== `tab-${b.dataset.tab}`));
+    if (b.dataset.tab === "history") loadSessions();
+    if (b.dataset.tab === "models") loadModels();
   }));
+  const tabOpen = (name) => !$(`#tab-${name}`).classList.contains("hidden");
+  const api = async (path) => (await fetch(`${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(TOKEN)}`)).json();
+  const when = (ts) => (ts ? new Date(ts * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }) : "?");
+
+  // -- history: every past conversation, replayable ------------------------------------------
+  let sessList = [], sessOn = null;
+  async function loadSessions() {
+    if (DEMO) { sessList = DEMO_SESSIONS; } else { try { sessList = await api("/api/sessions"); } catch (e) { sessList = []; } }
+    $("#sessions").innerHTML = sessList.map((s) =>
+      `<div class="sess ${s.session === sessOn ? "on" : ""}" data-id="${esc(s.session)}" role="option" tabindex="0">` +
+      `<div class="when">${esc(when(s.start))}${s.session === S.info.session ? " · now" : ""}</div>` +
+      `<div class="what">${esc(s.first || "")}</div>` +
+      `<div class="stat">${s.turns} turns${s.good ? ` · +${s.good}` : ""}${s.bad ? ` · −${s.bad}` : ""}${s.errors ? ` · ${s.errors} errors` : ""}` +
+      `${s.models && s.models.llm ? ` · ${esc(s.models.llm)}` : ""}</div></div>`).join("") || `<div class="dim">no conversations yet</div>`;
+  }
+  async function openSession(id) {
+    sessOn = id;
+    document.querySelectorAll(".sess").forEach((x) => x.classList.toggle("on", x.dataset.id === id));
+    const rows = DEMO ? DEMO_TURNS : await api(`/api/session?id=${encodeURIComponent(id)}`);
+    $("#session-view").innerHTML = rows.map((t) => {
+      const fa = t.timing && t.timing.first_audio, bits = [];
+      if (typeof fa === "number") bits.push(`first sound ${fa.toFixed(2)}s`);
+      if (t.llm && t.llm.model) bits.push(t.llm.model);
+      if (t.tools && t.tools.length) bits.push(`tools ${t.tools.join(", ")}`);
+      if (t.endpoint && t.endpoint.reason) bits.push(`turn end: ${t.endpoint.reason}${t.endpoint.turn_prob != null ? ` (${t.endpoint.turn_prob})` : ""}`);
+      if (t.barge_in) bits.push("interrupted");
+      if (t.error) bits.push(`error: ${t.error.slice(0, 80)}`);
+      const fb = t.feedback ? ` <span class="${t.feedback}">${t.feedback}</span>` : "";
+      return `<div class="hturn"><div class="you">› ${esc(t.user)}</div><div class="iris">${esc(t.reply || "(no reply)")}</div>` +
+        `<div class="meta">t${t.turn} · ${esc(bits.join(" · "))}${fb}</div></div>`;
+    }).join("") || `<div class="dim">no turns</div>`;
+  }
+  $("#sessions").addEventListener("click", (ev) => { const s = ev.target.closest(".sess"); if (s) openSession(s.dataset.id); });
+  $("#sessions").addEventListener("keydown", (ev) => { const s = ev.target.closest(".sess"); if (s && ev.key === "Enter") openSession(s.dataset.id); });
+
+  // -- models: what's installed, how fast it is here, switch / test -------------------------
+  async function loadModels() {
+    let d;
+    if (DEMO) d = DEMO_MODELS; else { try { d = await api("/api/models"); } catch (e) { return; } }
+    const o = d.ollama || {};
+    $("#models-head").textContent = `IRIS's Ollama: ${o.mode || "?"} at ${o.url || "?"} · ` +
+      Object.entries(o.env || {}).map(([k, v]) => `${k.replace("OLLAMA_", "")}=${v}`).join(" ") +
+      `  ·  bench at num_ctx ${d.num_ctx}` + (d.testing ? `  ·  testing ${d.testing} …` : "");
+    const head = "<tr><th>model</th><th>size</th><th>vram</th><th>1st token</th><th>tok/s</th><th>cold load</th><th>tools</th><th>thinks aloud</th><th></th></tr>";
+    $("#models").innerHTML = head + d.models.map((m) => {
+      const b = m.bench || {}, leak = m.leaks === true ? "yes" : m.leaks === false ? "no" : "?";
+      return `<tr class="${m.current ? "cur" : ""}" data-m="${esc(m.name)}"><td>${m.current ? "▸ " : ""}${esc(m.name)}${m.fallback ? " (fallback)" : ""}</td>` +
+        `<td>${esc(m.params || "")} ${esc(m.quant || "")} · ${m.size_gb} GB</td>` +
+        `<td>${m.loaded_mb ? m.loaded_mb + " MB" : (b.vram_mb ? b.vram_mb + " MB" : "–")}</td>` +
+        `<td>${b.ttft_s != null ? b.ttft_s.toFixed(2) + "s" : "–"}</td><td>${b.tok_s != null ? b.tok_s : "–"}</td>` +
+        `<td>${b.load_s != null ? b.load_s.toFixed(1) + "s" : "–"}</td><td>${esc(b.tools || "–")}</td>` +
+        `<td class="${m.leaks ? "leak" : m.leaks === false ? "ok" : ""}">${leak}</td>` +
+        `<td>${m.current ? "" : `<button class="btn" data-a="model">USE</button> `}<button class="btn" data-a="bench_model" ${d.testing ? "disabled" : ""}>TEST</button></td></tr>`;
+    }).join("");
+  }
+  $("#models").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-a]");
+    if (!b) return;
+    const name = b.closest("tr").dataset.m;
+    if (b.dataset.a === "model" && !confirm(`Switch IRIS to ${name}? (saved; iris rollback undoes it)`)) return;
+    cmd({ cmd: b.dataset.a, name }).then((r) => { if (r && r.error) sysline(r.error); loadModels(); });
+  });
   $("#report").href = `/report?token=${encodeURIComponent(TOKEN)}`;
 
   async function refresh() {
@@ -269,11 +345,27 @@
   });
   const talk = () => (DEMO ? null : cmd({ cmd: "ptt", action: "toggle" }));
   $("#ptt").addEventListener("click", talk);
-  $("#face").addEventListener("click", talk);
+  // full screen: only the core (and live captions) stay; Esc or f leaves
+  function solo(on) {
+    on = on ?? !document.body.classList.contains("solo");
+    document.body.classList.toggle("solo", on);
+    core.setCompact(!on);                     // the big HUD only in full view; a small eye on the dashboard
+    try {
+      if (on && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+      if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    } catch (e) { /* the CSS mode works without the Fullscreen API */ }
+  }
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement && document.body.classList.contains("solo")) { document.body.classList.remove("solo"); core.setCompact(true); }
+  });
+  $("#solo").addEventListener("click", () => solo());
+  $("#core").addEventListener("dblclick", () => solo());
   document.addEventListener("keydown", (ev) => {
     const typing = ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName);
     if (typing) { if (ev.key === "Escape") document.activeElement.blur(); return; }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (ev.key === "f") { solo(); return; }
+    if (ev.key === "Escape" && document.body.classList.contains("solo")) { solo(false); return; }
     if (ev.key === " " || ev.key === "Enter") { ev.preventDefault(); talk(); }
     else if (ev.key === "t") { ev.preventDefault(); $("#text").focus(); }
     else if (ev.key === "m") cmd({ cmd: "mode" });
@@ -288,33 +380,31 @@
   function setState(s, mic, out) {
     if (s !== S.state) {
       S.state = s;
-      const el = $("#state");
-      el.textContent = `‹ ${LABEL[s] || s.toUpperCase()} ›`;
-      el.className = `state ${s}`;
-      if (s !== "thinking") S.tokens = 0;
-      $("#tok").textContent = "";
+      document.title = `IRIS · ${LABEL[s] || s}`;
+      $("#mini-state").textContent = LABEL[s] || s.toUpperCase();
+      $("#mini-state").className = `mini-state ${s}`;
+      if (s !== "thinking") { S.tokens = 0; core.sub = ""; }
     }
-    face.setState(s);
-    face.setLevels(mic, out);
-    $("#mic-m").textContent = bar(mic || 0);
-    $("#out-m").textContent = bar(out || 0);
+    core.setState(s);
+    core.setLevels(mic, out);
   }
   function onEvent(e) {
     switch (e.type) {
       case "hello": $("#conn").className = "conn on"; $("#conn").textContent = "● live"; break;
       case "state": setState(e.state, e.mic, e.out); break;
-      case "user": addYou(e.text); break;
+      case "user": addYou(e.text); caption(e.text, true); break;
       case "say": onSay(e.text); break;
-      case "spoken": onSpoken(e.text); break;
-      case "delta": S.tokens += 1; $("#tok").textContent = `${S.tokens} tokens`; break;
-      case "turn": onTurn(e); refreshSoon(); break;
+      case "spoken": onSpoken(e.text); core.toolDone(); break;
+      case "delta": S.tokens += 1; core.sub = `${S.tokens} TOKENS`; break;
+      case "turn": onTurn(e); refreshSoon(); if (tabOpen("history") && sessOn === S.info.session) openSession(sessOn); break;
       case "note": sysline(e.text); break;
-      case "tool": sysline(e.label + " …"); break;
+      case "tool": sysline(e.label + " …"); core.tool(e.name, (e.label || "").split(": ").slice(1).join(": ")); break;
       case "interrupt": if (S.cur) S.cur.el.classList.add("cut"); break;
       case "rated": markRated(e.turn, e.value); break;
       case "ptt": $("#ptt").classList.toggle("rec", !!e.recording); $("#ptt").textContent = e.recording ? "■ STOP" : "◉ TALK"; break;
       case "info": S.info = { ...S.info, ...e }; chips(); break;
       case "lists": refresh(); break;
+      case "models": if (tabOpen("models")) loadModels(); break;
       case "sys": lastSys.gpu = e.gpu; sys({}); break;
       case "bye": S.ended = true; $("#ended").classList.remove("hidden"); setState("asleep", 0, 0); break;
     }
@@ -332,12 +422,19 @@
   }
 
   // -- demo mode (iris eye): the page animates itself ----------------------------------------
+  const DEMO_SESSIONS = [{ session: "demo-1", start: Date.now() / 1000 - 3600, turns: 3, first: "what's the weather like on Mars today?", good: 1, bad: 0, errors: 0, models: { llm: "gemma4:e4b-it-qat" } },
+    { session: "demo-2", start: Date.now() / 1000 - 90000, turns: 12, first: "read me a paragraph about Spider-Man", good: 2, bad: 1, errors: 0, models: { llm: "gemma4:e4b-it-qat" } }];
+  const DEMO_TURNS = [{ turn: 1, user: "what's the weather like on Mars today?", reply: "Cold. About minus sixty, with dust in the afternoon.", timing: { first_audio: 1.21 }, llm: { model: "gemma4:e4b-it-qat" }, tools: ["web_search"], endpoint: { reason: "smart_turn", turn_prob: 0.97 }, feedback: "good" }];
+  const DEMO_MODELS = { num_ctx: 4096, ollama: { mode: "managed", url: "http://127.0.0.1:11435", env: { KEEP_ALIVE: "30m" } }, models: [
+    { name: "gemma4:e4b-it-qat", current: true, params: "8B", quant: "Q4_0", size_gb: 6.1, leaks: false, bench: { ttft_s: 0.38, tok_s: 31.2, load_s: 6.1, tools: "7/7", vram_mb: 5200 } },
+    { name: "qwen3:4b", params: "4.0B", quant: "Q4_K_M", size_gb: 2.5, leaks: true, bench: { ttft_s: 0.22, tok_s: 47.5, load_s: 6.7, tools: "6/7", vram_mb: 3033 } }] };
+
   function demoReply(text) {
     setTimeout(() => setState("thinking", 0, 0), 300);
     setTimeout(() => {
       const words = ["Here's", "a", "short", "spoken", "reply,", "so", "you", "can", "see", "the", "mouth", "move."];
       setState("speaking", 0, 0.5);
-      words.forEach((w, i) => setTimeout(() => { onSay(w); onSpoken(w); face.setLevels(0, 0.3 + Math.random() * 0.6); }, i * 220));
+      words.forEach((w, i) => setTimeout(() => { onSay(w); onSpoken(w); core.setLevels(0, 0.3 + Math.random() * 0.6); }, i * 220));
       setTimeout(() => {
         onTurn({ turn: (S.lastTurn || 0) + 1, timing: { stt_done: 0.32, first_token: 0.71, first_chunk: 0.95, first_chunk_synth: 1.12, first_audio: 1.18 }, llm: { tok_s: 31 }, words: words.length });
         setState("idle", 0, 0);
@@ -359,19 +456,25 @@
     const next = () => {
       const [s, ms] = seq[i++ % seq.length];
       setState(s, 0, 0);
-      if (s === "hearing") addYou("what's the weather like on Mars today?");
-      if (s === "speaking") { ["Cold.", "About minus sixty,", "with dust in the afternoon."].forEach((w, k) => setTimeout(() => { onSay(w); onSpoken(w); }, k * 900)); }
+      if (s === "hearing") { addYou("what's the weather like on Mars today?"); caption("what's the weather like on Mars today?", true); }
+      if (s === "thinking") core.tool("web_search", "weather on mars");
+      if (s === "speaking") { core.toolDone(); ["Cold.", "About minus sixty,", "with dust in the afternoon."].forEach((w, k) => setTimeout(() => { onSay(w); onSpoken(w); }, k * 900)); }
       if (s === "idle" && i > 4) onTurn({ turn: (S.lastTurn || 0) + 1, timing: { stt_done: 0.3, first_token: 0.8, first_chunk: 1.0, first_chunk_synth: 1.2, first_audio: 1.25 }, llm: { tok_s: 33 }, words: 9 });
       setTimeout(next, ms);
     };
     next();
     setInterval(() => {
-      if (S.state === "speaking") face.setLevels(0, 0.25 + Math.abs(Math.sin(Date.now() / 140)) * 0.6);
-      else if (S.state === "hearing") face.setLevels(0.2 + Math.random() * 0.5, 0);
-      $("#mic-m").textContent = bar(face.mic); $("#out-m").textContent = bar(face.out);
+      if (S.state === "speaking") core.setLevels(0, 0.25 + Math.abs(Math.sin(Date.now() / 140)) * 0.6);
+      else if (S.state === "hearing") core.setLevels(0.2 + Math.random() * 0.5, 0);
     }, 90);
   }
 
+  if (qs.get("solo") === "1") document.body.classList.add("solo");   // open straight into full view
+  core.setCompact(!document.body.classList.contains("solo"));
+  if (qs.get("tab")) setTimeout(() => { const b = document.querySelector(`.tabs button[data-tab="${qs.get("tab")}"]`); if (b) b.click(); }, 50);
   if (DEMO) demo();
+  // dev: ?ff=N fast-forwards the core N frames (headless browsers barely run animation frames)
+  if (qs.get("perf")) core.debug = true;     // ?perf=1 shows the core's frame cost and detail level
+  if (qs.get("ff")) { for (let i = 0; i < Number(qs.get("ff")); i++) { core.t += 1 / 30; core.step(1 / 30); } core.draw(); }
   else { connect(); refresh(); setInterval(refresh, 20000); setState("idle", 0, 0); }
 })();

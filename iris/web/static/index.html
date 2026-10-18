@@ -24,16 +24,11 @@
     </form>
   </section>
 
-  <section class="panel core" aria-label="IRIS">
-    <canvas id="face" aria-hidden="true"></canvas>
-    <div class="state-line">
-      <span id="state" class="state">‹ BOOTING ›</span>
-    </div>
-    <div class="meters">
-      <span>MIC <span id="mic-m" class="meter">░░░░░░░░░░░░</span></span>
-      <span>OUT <span id="out-m" class="meter">░░░░░░░░░░░░</span></span>
-      <span id="tok" class="dim"></span>
-    </div>
+  <section class="panel core" id="core-panel" aria-label="IRIS">
+    <button id="solo" class="solo-btn" title="Full view (f) · Esc to leave">⛶ FULL VIEW</button>
+    <span id="mini-state" class="mini-state">BOOTING</span>
+    <canvas id="core" aria-hidden="true"></canvas>
+    <div id="caption" class="caption" aria-hidden="true"></div>
   </section>
 
   <section class="panel telemetry" aria-label="Telemetry">
@@ -49,6 +44,8 @@
   <section class="panel deck" aria-label="Controls">
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="lists" class="on">LISTS</button>
+      <button role="tab" data-tab="history">HISTORY</button>
+      <button role="tab" data-tab="models">MODELS</button>
       <button role="tab" data-tab="findings">FINDINGS</button>
       <button role="tab" data-tab="voice">VOICE</button>
       <button role="tab" data-tab="jobs">JOBS</button>
@@ -62,6 +59,16 @@
         <button class="btn">ADD</button>
       </form>
       <div id="lists" class="cols3"></div>
+    </div>
+    <div class="tab hidden" id="tab-history">
+      <div class="hist">
+        <div id="sessions" class="sessions" role="listbox" aria-label="Past conversations"></div>
+        <div id="session-view" class="session-view"><div class="dim">pick a conversation</div></div>
+      </div>
+    </div>
+    <div class="tab hidden" id="tab-models">
+      <div id="models-head" class="dim models-head"></div>
+      <div class="table-wrap"><table id="models" class="models"></table></div>
     </div>
     <div class="tab hidden" id="tab-findings"><div id="findings" class="findings"></div></div>
     <div class="tab hidden" id="tab-voice"><div id="knobs" class="knobs"></div></div>
@@ -78,7 +85,9 @@
     </div>
     <div class="tab hidden" id="tab-keys">
       <pre class="keys">space / enter   talk (push-to-talk) · interrupt while IRIS speaks
-t               type a message           esc   leave the text box
+t               type a message           esc   leave the text box / full screen
+f               full screen core (double-click it too)
+drag / scroll   spin / zoom the core
 m               hands-free ⇄ push-to-talk
 +  =  -         rate the last reply good / ok / bad
 say             “add … to my feature list” · “what's on my todo list?”
@@ -91,7 +100,7 @@ say             “add … to my feature list” · “what's on my todo list?�
  │   SESSION ENDED              │
  │   iris talk --ui  to restart │
  └──────────────────────────────┘</pre></div>
-<script src="face.js"></script>
+<script src="core.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -121,6 +121,47 @@ def sessions(days: int = 1) -> list[str]:
     return seen
 
 
+def turn_summary(rec: dict) -> dict:
+    """The parts of a turn record a UI shows (transcript, ratings, latency breakdown)."""
+    llm, tm = rec.get("llm") or {}, rec.get("timing") or {}
+    return {"turn": rec.get("turn"), "user": rec.get("user_text"), "reply": rec.get("reply_spoken"),
+            "mode": rec.get("mode"), "timing": tm, "stt_s": (rec.get("stt") or {}).get("secs"),
+            "llm": {k: llm.get(k) for k in ("model", "ttft_s", "prompt_eval_s", "prompt_tokens", "tok_s",
+                                             "tokens", "load_s", "done_reason")},
+            "tts": {k: (rec.get("tts") or {}).get(k) for k in ("engine", "first_chunk_gen_s", "gen_s", "audio_s")},
+            "barge_in": rec.get("barge_in"), "cancelled": rec.get("cancelled"), "error": rec.get("error"),
+            "tools": [x.get("name") for x in rec.get("tools") or []],
+            "words": len((rec.get("reply_spoken") or "").split()), "feedback": rec.get("feedback"),
+            "endpoint": {k: (rec.get("endpoint") or {}).get(k) for k in ("reason", "turn_prob", "trailing_silence_ms")},
+            "ts": rec.get("ts")}
+
+
+def session_index(days: int = 60) -> list[dict]:
+    """One row per conversation, newest first: when, how long, what it was about, how it went."""
+    by: dict[str, dict] = {}
+    for r in records(days):
+        sid = r.get("session")
+        if not sid:
+            continue
+        s = by.setdefault(sid, {"session": sid, "start": r.get("ts"), "end": r.get("ts"), "turns": 0,
+                                "first": None, "models": None, "good": 0, "bad": 0, "errors": 0})
+        s["end"] = r.get("ts") or s["end"]
+        t = r.get("type")
+        if t == "session_start":
+            s["start"] = r.get("ts")
+            s["models"] = r.get("models")
+            s["persona"] = r.get("persona")
+        elif t == "turn" and r.get("turn") is not None:
+            s["turns"] += 1
+            s["first"] = s["first"] or r.get("user_text")
+            s["errors"] += 1 if r.get("error") else 0
+        elif t == "feedback":
+            v = r.get("value")
+            if v in ("good", "bad"):
+                s[v] += 1
+    return sorted((s for s in by.values() if s["turns"]), key=lambda s: s["start"] or 0, reverse=True)
+
+
 def audio_path(rel: str | None) -> Path | None:
     if not rel:
         return None

@@ -110,9 +110,7 @@ class Session:
         if self.listen:
             self.stt = STT(self.s.model("stt", "base.en"))
             print(f"  ears: whisper {self.stt.name} loaded in {self.stt.load():.1f}s (CPU)", flush=True)
-            vad = VADConfig(threshold_db=float(self.s.knob("vad.threshold_db", 12)),
-                            silence_ms=int(self.s.knob("vad.silence_ms", 700)),
-                            min_speech_ms=int(self.s.knob("vad.min_speech_ms", 250)))
+            vad = vad_config(self.s)
             device = mic_device(self.mic, self.s)
             if self.headset is None:
                 self.headset = looks_like_headset(mic_name(device))
@@ -180,15 +178,8 @@ class Session:
             self.say_line(f"  {self.s.display_name}: {text}")
 
     def _on_turn(self, rec: dict) -> None:
-        llm, tm = rec.get("llm") or {}, rec.get("timing") or {}
-        summ = {"turn": rec.get("turn"), "user": rec.get("user_text"), "reply": rec.get("reply_spoken"),
-                "mode": rec.get("mode"), "timing": tm, "stt_s": (rec.get("stt") or {}).get("secs"),
-                "llm": {k: llm.get(k) for k in ("model", "ttft_s", "prompt_eval_s", "prompt_tokens", "tok_s",
-                                                 "tokens", "load_s", "done_reason")},
-                "tts": {k: (rec.get("tts") or {}).get(k) for k in ("engine", "first_chunk_gen_s", "gen_s", "audio_s")},
-                "barge_in": rec.get("barge_in"), "cancelled": rec.get("cancelled"), "error": rec.get("error"),
-                "tools": [x.get("name") for x in rec.get("tools") or []],
-                "words": len((rec.get("reply_spoken") or "").split())}
+        from .trace import turn_summary
+        summ = turn_summary(rec)
         self.recent = (self.recent + [summ])[-40:]
         self.bus.publish("turn", **summ)
 
@@ -317,7 +308,8 @@ class Session:
             return
         endpoint = {"method": utt.method, "speech_ms": utt.speech_ms,
                     "trailing_silence_ms": utt.trailing_silence_ms,
-                    "merged_after_resume": utt.merged_after_resume}
+                    "merged_after_resume": utt.merged_after_resume,
+                    "reason": utt.end_reason or None, "turn_prob": utt.turn_prob}
         if not tr.text or tr.hallucination:
             self._mark_handled(utt.includes)
             self.writer.turn({"turn": None, "mode": utt.method, "audio_in": audio_rel, "user_text": tr.text,
@@ -557,12 +549,66 @@ class Session:
             elif act == "stop":
                 jobs.stop(timeout=5)
             return {"ok": True, "jobs": jobs.status()}
+        if c == "model":
+            return self.use_model(str(cmd.get("name") or ""))
+        if c == "bench_model":
+            return self.bench_model(str(cmd.get("name") or ""))
         if c == "quit":
             if conv and conv.busy():
                 conv.interrupt("quit")
             self.running = False
             return {"ok": True}
         return {"ok": False, "error": f"unknown command {c!r}"}
+
+    def use_model(self, name: str) -> dict:
+        """Switch the LLM now and save it to pod.yaml (a commit you can roll back)."""
+        from .config import set_value
+        if not name or not self.llm.has_model(name):
+            return {"ok": False, "error": f"{name} is not installed on {self.llm.url}"}
+        try:
+            if set_value("models", "llm", name, self.s.root):
+                selfstore.commit(f"you switched the LLM to {name} (web UI)", files=["pods/voice/pod.yaml"], auto=False)
+        except Exception as e:
+            log.warning("could not save the model choice: %s", e)
+        self.s.overrides["model.llm"] = name
+        old = self.llm.model
+        self.llm.model = name
+        if self.conv:
+            self.conv._native_tools = None
+            self.conv.fallbacks_tried.discard(name)
+        threading.Thread(target=lambda: (self.llm.unload(old), self._warm(llm_options(self.s, name))), daemon=True).start()
+        self.writer.event("model_switch", frm=old, to=name, source="ui")
+        self.bus.publish("info", **self.info())
+        self.bus.publish("models")
+        return {"ok": True, "model": name}
+
+    def bench_model(self, name: str) -> dict:
+        """Measure one model now (speed, VRAM, tool choice, reasoning leak), in the background."""
+        if getattr(self, "bench_running", None):
+            return {"ok": False, "error": f"already testing {self.bench_running}"}
+        if self.conv and self.conv.busy():
+            return {"ok": False, "error": "wait until IRIS has finished talking"}
+
+        def run():
+            from .improve import bench
+            self.bench_running = name
+            self.bus.publish("models")
+            try:
+                ctx = int(self.s.knob("llm.num_ctx", 4096))
+                from . import ollama_ctl
+                bench._record("leak", bench.reasoning_leak(name))
+                bench._record("llm", bench.measure(name, ctx, extra=ollama_ctl.profile(self.s, name)))
+                bench._record("tools", bench.tool_accuracy(self.s, name))
+            except Exception as e:
+                log.warning("testing %s failed: %s", name, e)
+                self.bus.publish("note", text=f"testing {name} failed: {e}")
+            finally:
+                self.bench_running = None
+                self._warm(llm_options(self.s, self.llm.model))     # the conversation's model back in VRAM
+                self.bus.publish("models")
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"ok": True, "testing": name}
 
     def run_web(self) -> None:
         from .web.server import WebServer
@@ -660,6 +706,23 @@ class Session:
             paths.socket_path().unlink()
         except FileNotFoundError:
             pass
+
+
+def vad_config(s: Settings) -> VADConfig:
+    """Knobs (tuned overnight) plus pod.yaml `vad:` (engine and end-of-turn model).
+
+    Defaults: Silero speech detection and the Smart Turn model, each falling back to the
+    energy detector / silence timeout when its model can't be loaded."""
+    v = s.pod.get("vad") or {}
+    return VADConfig(threshold_db=float(s.knob("vad.threshold_db", 12)),
+                     silence_ms=int(s.knob("vad.silence_ms", 700)),
+                     min_speech_ms=int(s.knob("vad.min_speech_ms", 250)),
+                     engine=str(v.get("engine", "silero")),
+                     silero_threshold=float(v.get("silero_threshold", 0.5)),
+                     smart_turn=bool(v.get("smart_turn", True)),
+                     turn_check_ms=int(v.get("turn_check_ms", 250)),
+                     turn_threshold=float(v.get("turn_threshold", 0.5)),
+                     turn_max_ms=int(v.get("turn_max_ms", 2000)))
 
 
 _WAKE_VARIANTS = {"iris": r"(?:irys|irus|iras|ires|eyris|irish|iris's)"}

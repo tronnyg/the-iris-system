@@ -236,9 +236,9 @@ def cmd_ollama(a) -> None:
     elif act == "start":
         print(ollama_ctl.ensure(s))
     elif act == "stop":
-        print("stopped" if ollama_ctl.stop() else "IRIS's Ollama wasn't running")
+        print("stopped" if ollama_ctl.stop(s) else "IRIS's Ollama wasn't running")
     elif act == "restart":
-        ollama_ctl.stop()
+        ollama_ctl.stop(s)
         print(ollama_ctl.ensure(Settings_reload()))
     elif act == "set":
         if len(rest) != 2:
