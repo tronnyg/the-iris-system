@@ -64,14 +64,32 @@ The only exception to the one-branch rule: versions of the system that are *mean
    **blocked** (outside git, `~/.local/share/iris/variants/state.yaml`), send a desktop notification and stop
    touching it. After fixing by hand, `iris branch unblock <name>` and sync again.
 
+### A variant's documentation
+
+A variant documents itself on its own branch, in its own folder, so that merging `main` into it never conflicts
+(rules: [README.md](README.md#on-a-variant-branch)):
+
+```
+docs/variants/<name>/README.md       what it is, how it differs from main, how to run, stop and measure it
+docs/variants/<name>/CHANGELOG.md    its own change history (main's CHANGELOG.md is only edited on main)
+docs/variants/<name>/adr/V-NNNN-*.md its own decision records (own numbering)
+```
+
+The shared architecture pages on the variant branch describe the variant as it is. On a `variant/<name>` branch
+`tests/test_docs.py` also checks that this folder exists with its README and CHANGELOG.
+
 ### Creating a variant
-1. On an improvement branch: add the entry to `docs/variants.yaml`; merge it as usual (so the registry is on main).
+1. On an improvement branch: add the entry to `docs/variants.yaml` (and an ADR if the variant embodies a decision);
+   merge it as usual (so the registry is on main).
 2. `git branch variant/<name> main` (from an up-to-date main), push it.
-3. `iris branch status` should list it; `auto` variants are then synced by `iris branch sync`.
-4. Retiring: set `retired: true` (improvement branch), then delete `variant/<name>` locally and on origin.
+3. On the variant branch: create `docs/variants/<name>/README.md` and `CHANGELOG.md` (and `adr/` when needed).
+4. `iris branch status` should list it; `auto` variants are then synced by `iris branch sync`.
+5. Retiring: set `retired: true` (improvement branch), then delete `variant/<name>` locally and on origin. Keep its
+   `docs/variants/<name>/` folder in history: a summary of what it learned goes into main's CHANGELOG or an ADR.
 
 ## 4. Hygiene
 - Delete merged branches the same day. `iris branch status` lists "merged but not deleted" branches; confirm with
   the user before deleting any branch you didn't create.
 - Commit messages: imperative, one logical change each; AI-authored commits carry their `Co-Authored-By` trailer.
+- Every merge of code into `main` has a `CHANGELOG.md` entry: `iris branch finish` refuses otherwise.
 - Never force-push `main` or a variant. Never move `main` backwards.

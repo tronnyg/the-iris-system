@@ -19,7 +19,7 @@ Everything runs on your machine and costs nothing. The only network use is downl
 and the nightly scout checking for new versions.
 
 > Built for: GTX 1070 (8 GB, Pascal), i5-12400F, 15 GB RAM, Arch/Omarchy (Wayland), Python 3.11.
-> Design background: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> Documentation: [docs/README.md](docs/README.md) (architecture with diagrams, decision records, changelog, rebuild guide).
 
 ---
 
@@ -144,7 +144,7 @@ Claude Code* below.
 
 ## How it improves itself
 
-Three loops, on three time scales (details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
+Three loops, on three time scales (details in [docs/architecture/08](docs/architecture/08-learning-loops.md)):
 
 | Loop | When | What it does |
 |---|---|---|
@@ -207,7 +207,7 @@ anything else on this machine. `iris ollama status | set | profile | restart | s
 | Ears | `iris set model stt small.en` (the night loop also picks the best installed size by itself) |
 | Persona | `iris persona list`, `iris persona use plain`, `iris persona add <name> --file my.yaml` |
 | Agent | `iris agent new friday --persona my.yaml`, then `iris --agent friday talk` |
-| New voice engine | one module in `iris/tts/engines/` + an install function in `setup.sh` (see ARCHITECTURE) |
+| New voice engine | one module in `iris/tts/engines/` + an install function in `setup.sh` (see [docs/architecture/14](docs/architecture/14-development.md#3-extending)) |
 
 ## Commands
 
@@ -236,7 +236,8 @@ iris agent list|new
   .venvs/{core,kokoro,chatterbox}  one Python env per part (their dependencies clash)
   self_template/                   what a new agent starts from
   .iris/dossier/                   the improvement dossier (iris dossier; gitignored)
-  docs/ROADMAP.md                  researched improvement backlog for Claude Code sessions
+  docs/                            architecture (with diagrams), ADRs, rebuild guide, roadmap, branching rules
+  CHANGELOG.md                     what changed, merge by merge
 ~/.local/share/iris/
   agents/<name>/self/              the agent's self store (git): persona, memory, settings, evals
   agents/<name>/traces/            what happened, turn by turn (JSON lines)

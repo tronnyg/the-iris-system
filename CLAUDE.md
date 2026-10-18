@@ -1,8 +1,9 @@
 # IRIS: notes for Claude Code
 
-IRIS is a fully local voice assistant (Whisper on CPU -> an Ollama LLM on a GTX 1070 ->
+IRIS is a fully local voice assistant (Whisper -> an Ollama LLM on a GTX 1070 ->
 Kokoro/Chatterbox TTS) that improves itself without retraining. Read `README.md` for usage and
-`docs/ARCHITECTURE.md` for the design. Hardware: GTX 1070 8 GB (Pascal, sm_61, no bf16),
+`docs/README.md` for the documentation: `docs/architecture/` (how every part works, with diagrams),
+`docs/adr/` (why), `CHANGELOG.md` (what changed), `docs/REBUILD.md`. Hardware: GTX 1070 8 GB (Pascal, sm_61, no bf16),
 i5-12400F, 15 GB RAM, Arch/Omarchy (Wayland), Python 3.11.
 
 ## Your role
@@ -23,6 +24,12 @@ the data IRIS collected:
 
 ## Working rules
 
+- Docs are part of every change (rules: `docs/README.md`): a `CHANGELOG.md` line under `[Unreleased]`
+  (`iris branch finish` refuses code merges without one), the architecture page of every part you
+  touched (diagrams included), and an ADR in `docs/adr/` for decisions, measured rejections and anything
+  that supersedes an earlier ADR. `tests/test_docs.py` fails on undocumented modules, knobs, config keys,
+  env vars, CLI commands, trace events, ADRs and broken doc links. On a variant branch, history goes in
+  `docs/variants/<name>/` instead.
 - Tests: `.venvs/core/bin/python -m pytest -q` (hermetic: fake Ollama, temp IRIS_HOME, no
   network, no real models). Run them before and after changes; add tests for new behaviour.
 - Branches: **one improvement branch at a time, always cut from `main`, never from another branch**. Commit in

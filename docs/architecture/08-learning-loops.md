@@ -1,0 +1,194 @@
+# 08 · Learning loops: sleep, idle, night, and the handoff to Claude Code
+
+Source: `iris/improve/*.py`, `iris/evals.py`, `iris/metrics.py`. Decisions:
+[ADR-0004](../adr/0004-change-tiers-and-rollback.md), [ADR-0010](../adr/0010-no-regression-eval-gate.md),
+[ADR-0011](../adr/0011-local-loops-measure-claude-code-engineers.md).
+
+## 1. Four time scales
+
+```mermaid
+flowchart LR
+    LIVE["LIVE (while you talk)<br/>trace every turn · remember/forget now ·<br/>voice/list/pronunciation commands"] --> SLEEP
+    SLEEP["SLEEP (session ends)<br/>reflection → memory deltas, episode,<br/>regression evals, hidden guesses"] --> IDLE
+    IDLE["IDLE (every 30 min, after 10 quiet min, 15 min budget)<br/>sleep · metrics · judge · findings · bench"] --> NIGHT
+    NIGHT["NIGHT (03:00 or iris night, 4 h budget)<br/>all 16 stages"] --> HAND
+    HAND["HANDOFF (when you choose)<br/>iris dossier → /improve in Claude Code<br/>→ code on a branch, you merge"]
+    HAND -.-> LIVE
+```
+
+Everything yields to you: starting `iris talk` stops a running job, which saves what it has
+([09](09-jobs-and-processes.md)).
+
+## 2. The night stages
+
+```mermaid
+flowchart TD
+    C[cleanup<br/>delete audio over 14 days, traces over 365] --> SL[sleep<br/>reflect on unreflected sessions]
+    SL --> ME[metrics<br/>from traces since the last run]
+    ME --> STT[stt<br/>teacher Whisper grades the day's audio and every installed recogniser]
+    STT --> TTS[tts<br/>speech round trips per voice, A/B clips, pronunciation-rule tuning]
+    TTS --> JU[judge<br/>bigger LLM scores replies; poor ones → regression evals]
+    JU --> EX[experiments<br/>keep or revert earlier auto changes]
+    EX --> TU[tune<br/>new bounded knob steps, STT model choice]
+    TU --> EV[evals<br/>full suite with the current config]
+    EV --> PR[prompt<br/>prompt edits through the gate → finding]
+    PR --> VO[voice<br/>your A/B votes → finding]
+    VO --> SC[scout<br/>packages, Ollama, trending models, local LLM benchmarks]
+    SC --> BE[bench<br/>latency, tool choice, Ollama server settings]
+    BE --> FI[findings<br/>metrics vs targets, regressions, errors, slow stages]
+    FI --> SU[suggest<br/>the judge's own ideas as low-confidence hints]
+    SU --> RE[report<br/>morning report, desktop notification]
+```
+
+Each stage is isolated (`Night.stage`): an exception is recorded and the next stage runs. A stage is
+skipped (with the reason recorded) when: you started talking, jobs are paused, the time budget is used,
+or it needs the LLM and Ollama/the model isn't available. `iris night --only stt,tts --skip report`
+runs a subset; partial runs still write a report unless `report` is skipped. Results go to
+`agents/<agent>/night/DATE/results.json` (idle runs: `idle-HHMM.json`).
+
+The idle subset is `sleep, metrics, judge, findings, bench` (bench without the Ollama-config comparison).
+
+## 3. Bounded auto-tuning with automatic rollback
+
+```mermaid
+stateDiagram-v2
+    [*] --> Proposed: a rule fires (metric past its limit, enough turns)
+    Proposed --> Active: set_value one step inside [min, max] + [auto] commit + register in self/state/experiments.yaml
+    Active --> Active: fewer than rollback.min_samples (15) new turns and younger than 7 days
+    Active --> Kept: targeted metric not worse by more than rollback.tolerance (10%) and first audio not 25% slower
+    Active --> Reverted: worse → git revert with the reason
+    Kept --> [*]
+    Reverted --> [*]
+```
+
+Rules (`tuner.RULES`), one step per knob per night, at most 3 changes, never a knob with an active
+experiment:
+
+| Knob | Direction | When | Targets |
+|---|---|---|---|
+| `vad.turn_hold_ms` | + | Smart Turn on and `premature_eos_rate` > max(0.05, target 0.03) | `premature_eos_rate` |
+| `vad.turn_hold_ms` | − | cut-offs ≤ 1 % and `trailing_wait_ms_p50` ≥ 500 | `trailing_wait_ms_p50` |
+| `vad.silence_ms` | ± | same two rules when Smart Turn is off | same |
+| `vad.threshold_db` | + | `false_trigger_rate` > 0.10 | `false_trigger_rate` |
+| `splitter.min_chunk_chars` | + / − | underruns > 0.3 per turn / underruns < 0.05 and first audio over target | underruns / `first_audio_p50` |
+| `llm.num_predict` | + / − | truncated > 10 % / truncated < 3 % and late barge-ins > 15 % or judge brevity < 3.5 | `truncated_rate` / `late_barge_in_rate` |
+| `llm.temperature` | − | format violations > 0.3 per turn | `format_violations_per_turn` |
+| `llm.history_turns` | − | prompt eval p50 > 0.8 s | `prompt_eval_p50` |
+| `stt.beam_size` | + | `stt_wer` over target and STT has time to spare | `stt_wer` |
+
+**STT model choice** (`tuner.choose_stt`): from the teacher grading, take the fastest installed
+recogniser whose WER is within 2 points of the best and whose median time is ≤ 0.6 s; registered as an
+experiment like a knob.
+
+## 4. Grading with bigger models ("teachers")
+
+* **STT** (`teacher.grade_stt`): large-v3-turbo (beam 5) re-transcribes up to 120 recent recordings;
+  that is the reference for the live transcripts (`stt_wer`) and for every candidate in
+  `models.stt.choices` (`@gpu` candidates only if the GPU has room). Spot checks with > 25 % WER go into
+  the report.
+* **Voice round trip** (`teacher.roundtrip`): each voice speaks fixed texts (`evals/tts_sentences.yaml`,
+  grouped and rotated nightly) plus recent real replies; Whisper transcribes them back; lost words =
+  intelligibility errors (`tts_roundtrip_wer`). Up to `night.rate_clips` (8) clips per voice are kept for
+  `iris rate`, the blind A/B listening test; your votes (`state/ratings.jsonl`) become a finding when one
+  voice leads by 3.
+* **Pronunciation rules** (`teacher.tune_rules`): each number/currency/maths rule is toggled per engine
+  and kept only if the round trip on the numbers group improves.
+* **Judge** (`judge.Judge`, `night.judge_model` qwen3:8b, falls back to the day model): scores the last
+  60 replies for relevance, brevity, honesty and persona (1–5). Replies with overall ≤ 2.5 or honesty ≤ 2
+  become regression evals. Calibrate it against your own ratings: the report shows both.
+
+## 5. Evals and the no-regression gate
+
+```mermaid
+sequenceDiagram
+    participant N as night prompt stage
+    participant P as promptopt
+    participant J as judge model
+    participant G as gate
+    participant L as day LLM
+    N->>N: baseline = run_suite(all cases, current config)
+    N->>P: failing cases
+    P->>J: "smallest prompt edit that fixes these" (k=3, rising temperature)
+    J-->>P: candidates (rejected if > 1.3× longer, < 0.5×, or losing cue tags)
+    loop each candidate
+        N->>G: run_gate(cases, base, candidate)
+        G->>L: replay every case with the candidate prompt
+        G->>L: re-run each flip with a second seed (it must reproduce)
+        G-->>N: accepted only if 0 new failures and ≥ 1 fix
+    end
+    N->>N: best accepted → finding with the full prompt and before/after replies (NOT shipped)
+```
+
+* **Cases:** `evals/golden/*.yaml` (yours, locked) and `evals/regressions/*.yaml` (harvested). A case
+  is `{id, user, history?, checks}`; checks: `max_words`, `min_words`, `no_markdown`, `no_emoji`,
+  `valid_cues`, `contains_any`, `not_contains`, `asks_question`, `judge: "rubric"` (judge must give 4–5).
+* **Why prompt edits are recorded, not shipped:** a small model's prompt edits overfit a small eval set;
+  a person or Claude Code decides ([ADR-0011](../adr/0011-local-loops-measure-claude-code-engineers.md)).
+* The gate cannot edit its own evaluator or the golden cases, so the loops can't grade their own homework.
+
+## 6. Benchmarks and the scout
+
+* **bench** (`improve/bench.py`, every night and idle): fixed prompt per model and context size (cold
+  load, time to first token, prompt eval, tokens/s, VRAM); reasoning-leak probe; tool-choice accuracy on
+  `evals/tools.yaml` (tools are not executed); at night, the same measurement on throwaway Ollama
+  instances with flash attention and `q8_0` KV cache. Rows → `state/bench.jsonl`; anything notable →
+  findings. The web UI's MODELS tab can run the same test on demand.
+* **scout** (`improve/scout.py`): PyPI versions of the packages in use, the latest Ollama release,
+  trending Hugging Face models filtered to what fits the GPU, and eval-suite benchmarks of models you
+  already pulled (`scout.ollama_candidates`). It never downloads (`scout.allow_downloads_gb: 0`).
+
+## 7. Findings
+
+A finding is something the loops noticed, with evidence (`state/findings.jsonl`):
+
+```json
+{"id": 12, "area": "perf", "kind": "bottleneck", "title": "First sound takes 2.19s (target 1.5s); biggest part: first_chunk_p50",
+ "evidence": ["stage medians: {...}"], "source": "findings", "confidence": "medium",
+ "count": 3, "status": "open", "fingerprint": "a1b2c3d4e5f6", "ts": 0, "last_seen": 0, "data": {}}
+```
+
+* `area`: perf · hearing · turn-taking · voice · intelligence · tools · memory · architecture · models.
+* `kind`: metric-regression · bottleneck · capability-gap · failure-cluster · suggestion · recommendation · benchmark.
+* The same finding again (same fingerprint: area + kind + title with numbers masked) raises `count`
+  instead of duplicating, so recurring problems rank first. `source: local-model` ideas rank last
+  (hints from a small model).
+* Sources: night `findings` stage, prompt gate, voice votes, scout, bench, the live pipeline (false
+  claims, leaks).
+* Close with `iris findings done F3 --note <commit>` or `drop` with a reason.
+
+## 8. The handoff: dossier → Claude Code
+
+```mermaid
+sequenceDiagram
+    participant You
+    participant I as iris dossier
+    participant CC as Claude Code (/improve)
+    participant B as iris branch
+    You->>CC: /improve [focus]
+    CC->>I: iris dossier
+    I-->>CC: .iris/dossier/ README · lists · findings · summary · bench · evals · conversations · done
+    CC->>CC: read docs/ROADMAP.md, rank: your lists → recurring findings → roadmap → hints
+    CC->>You: plan with evidence
+    CC->>B: iris branch start fix/<topic> (from main)
+    CC->>CC: code + tests + docs + CHANGELOG
+    CC->>You: results, before/after numbers
+    You->>CC: approve
+    CC->>B: iris branch finish --yes (merge, push, delete)
+    CC->>I: iris list done / iris findings done --note <commit>
+```
+
+The dossier contains transcripts (never audio) and is only read by a session you start; IRIS itself
+sends nothing anywhere. `.claude/commands/improve.md` is the procedure.
+
+## 9. The morning report
+
+`report.write` produces `agents/<agent>/reports/DATE.md` and `DATE.html`: key metrics with trends vs the
+last night, what changed by itself (experiments kept/reverted, new regressions, memory changes), findings,
+your lists, voice clips to rate, and what failed. `iris report --open`.
+
+## 10. Later: population-based search
+
+Evolutionary search (OpenEvolve, Darwin Gödel Machine) is deliberately left for later and only for narrow pieces
+with a fast automatic score (for example the end-of-turn function or the splitter, scored by replayed traces). Its
+winner would go through the same gate and approval path as everything else. See also
+[../plans/smarter-through-code.md](../plans/smarter-through-code.md).
