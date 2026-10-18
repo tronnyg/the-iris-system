@@ -157,3 +157,15 @@ def test_cue_words_in_round_brackets_are_not_read_aloud():
     from iris.textproc.sanitizer import Sanitizer
     text, rep = Sanitizer().clean("(dry) Oh, wonderful. *pause* Anyway (see above).")
     assert text.startswith("[dry]") and "[pause]" in text and "(see above)" in text and rep.stage == 2
+
+
+def test_reflection_drops_lessons_that_make_the_assistant_promise_things(fake_llm):
+    import json
+    from iris.improve import sleep
+    from iris.memory import Memory
+    reply = json.dumps({"lessons_add": [
+        "When the user requests a change in tone or delivery, implement the requested change with increased intensity.",
+        "When the user states the assistant is stuck, clarify that the assistant is operating within its design parameters.",
+        "When the user asks a factual question, answer in the first sentence."], "summary": "x"})
+    delta, _ = sleep.reflect([{"user_text": "hi", "reply_spoken": "hello"}], Memory(), fake_llm(reply))
+    assert delta.lessons_add == ["When the user asks a factual question, answer in the first sentence."]

@@ -23,6 +23,7 @@ Traces are the raw material for every improvement loop. A turn record (trace/v1)
 
 from __future__ import annotations
 
+import os
 import datetime as _dt
 import uuid
 from pathlib import Path
@@ -72,6 +73,21 @@ class TraceWriter:
         p.parent.mkdir(parents=True, exist_ok=True)
         sf.write(str(p), np.asarray(audio, dtype=np.float32), sr, subtype="PCM_16")
         return rel
+
+    def keep_as(self, rel: str | None, tag: str) -> str | None:
+        """Give audio that didn't become a turn (noise, a filler, "um") its own file name.
+
+        It was saved as <session>-t<next turn>.wav, which the next real turn overwrites."""
+        if not rel:
+            return rel
+        src = paths.audio_dir() / rel
+        self._kept = getattr(self, "_kept", 0) + 1
+        new = f"{rel.rsplit('-t', 1)[0]}-{tag}{self._kept}.wav"
+        try:
+            os.replace(src, paths.audio_dir() / new)
+        except OSError:
+            return rel
+        return new
 
 
 def day_files(days: int = 1, end: str | None = None) -> list[Path]:

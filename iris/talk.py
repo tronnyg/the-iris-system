@@ -35,6 +35,7 @@ from .llm import Ollama
 from .memory import Memory
 from .pipeline import Conversation, feedback_command, llm_options
 from .stt import STT, is_filler
+from .textproc import asr_fix
 from .trace import TraceWriter
 from .tts.client import engine_load_options, make_tts, synth_opts
 from .util import log
@@ -306,6 +307,7 @@ class Session:
                                  hotwords=self.hotwords())
         if prompt and tr.text and _echoes_prompt(tr.text, prompt):
             tr.hallucination = True            # Whisper repeated its hint instead of hearing speech
+        tr.text = asr_fix.apply(tr.text, (self.s.pod.get("stt") or {}).get("corrections"))
         stt_done = time.perf_counter() - utt.t_end
         if self._is_superseded(utt):           # the user carried on talking while we transcribed
             return
@@ -314,6 +316,7 @@ class Session:
                     "merged_after_resume": utt.merged_after_resume,
                     "reason": utt.end_reason or None, "turn_prob": utt.turn_prob}
         if not tr.text or tr.hallucination:
+            audio_rel = self.writer.keep_as(audio_rel, "f")        # not a turn: don't let the next one overwrite it
             self._mark_handled(utt.includes)
             self.writer.turn({"turn": None, "mode": utt.method, "audio_in": audio_rel, "user_text": tr.text,
                               "stt": tr.as_dict(), "endpoint": endpoint, "false_trigger": True})
@@ -328,6 +331,7 @@ class Session:
                               f"no-speech {tr.no_speech_prob if tr.no_speech_prob is not None else '?'}){hint}")
             return
         if is_filler(tr.text):           # "Um." / "Mm." alone: the user is thinking, keep listening
+            audio_rel = self.writer.keep_as(audio_rel, "u")
             self._mark_handled(utt.includes)
             self.writer.turn({"turn": None, "mode": utt.method, "audio_in": audio_rel, "user_text": tr.text,
                               "stt": tr.as_dict(), "endpoint": endpoint, "filler": True})
@@ -387,7 +391,7 @@ class Session:
         """Names Whisper should spell right: the agent's, pod.yaml stt.hotwords, and
         capitalised names from what IRIS remembers about you (cached per session)."""
         if getattr(self, "_hotwords", None) is None:
-            words = [self.s.display_name]
+            words = [self.s.display_name, "feature list", "todo list", "improvements list", "monotone"]
             words += [str(w) for w in ((self.s.pod.get("stt") or {}).get("hotwords") or [])]
             skip = {"The", "User", "They", "He", "She", "It", "IRIS", "Iris", "I"}
             for f in self.memory.facts():
