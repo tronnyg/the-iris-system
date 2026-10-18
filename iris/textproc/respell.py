@@ -112,7 +112,8 @@ _FORGET = re.compile(rf"{_LEAD}(?:forget|reset|undo|remove|delete|clear) (?:the 
 _NOT_WORDS = {"it", "its", "it's", "that", "that's", "this", "which", "what", "he", "she", "they", "you", "i", "we", "word",
               "name", "there", "how", "who", "why"}
 # words that are never part of a respelling: if the "respelling" has one, it was a sentence, not a lesson
-_FUNCTION = {"the", "a", "an", "you", "it", "is", "are", "was", "and", "to", "of", "in", "on", "that", "this", "what", "i", "me",
+_FUNCTION = {"wrong", "incorrect", "incorrectly", "correct", "correctly", "right", "badly", "differently", "properly", "poorly",
+             "funny", "weird", "weirdly", "strange", "better", "the", "a", "an", "you", "it", "is", "are", "was", "and", "to", "of", "in", "on", "that", "this", "what", "i", "me",
              "my", "your", "for", "with", "be", "do", "does", "he", "she", "we", "they", "but", "or", "so", "if", "not"}
 
 

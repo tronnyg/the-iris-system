@@ -117,6 +117,8 @@ def _match(t: str) -> list[VoiceChange]:
     return out or ([VoiceChange("", 0, STEADY)] if steady else [])
 
 
+_COMMAND_LEAD = re.compile(r"^(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:make (?:it|that|things?)|turn (?:it|that)|keep it|bring it|"
+                           r"go|be|get|a (?:bit|little|lot)|slightly|much|way|just|even)\b")
 _LISTY = re.compile(r"\blist\b|\bto-?\s?do\b|\bimprovements\b", re.I)
 
 
@@ -136,7 +138,10 @@ def parse(text: str, last: tuple[str, int] | None = None) -> list[VoiceChange]:
     words = low.split()
     if not words:
         return []
-    if len(words) <= 12 and (len(words) <= 7 or _ABOUT_YOU.search(low)):
+    # a short phrase counts only if it is about the voice, a bare command ("louder", "a bit faster") or an order
+    # about "it": "the train was too fast" / "my cat is too loud at night" are about something else (found by the
+    # replay benchmark: both changed the settings)
+    if len(words) <= 12 and (_ABOUT_YOU.search(low) or len(words) <= 3 or _COMMAND_LEAD.match(low)):
         found = _match(low)
         if found:
             return found

@@ -147,6 +147,8 @@ flowchart LR
 
 ## 7. Adding a new deterministic skill
 
+(Cases for a new skill go into the replay benchmark, [08 §11](08-learning-loops.md#11-the-replay-benchmark).)
+
 1. Put the matcher and the answer in a small module (pure function `text -> answer | None`), matching
    only complete utterances.
 2. Call it from `Conversation.respond` (exact answers) or `handle_command` (actions), in the right

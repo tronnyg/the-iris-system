@@ -8,6 +8,18 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
 
 ## [Unreleased]
 
+### Added
+- The replay benchmark (`iris replay`, `iris/replay.py`, ADR-0032): 177 real or redacted utterances and what must happen
+  (141 train cases in `evals/replay/`, 36 held out in `$IRIS_HOME/replay/holdout/`); offline mode is part of the test suite,
+  `--live` checks the real model. Every answer now carries a `route` (recorded on turn records; metrics `route_counts`,
+  `code_handled_rate`).
+
+### Fixed
+- Short phrases about something else changed the voice settings ("the train was too fast", "my cat is too loud at night",
+  "what does the word faster mean"): a short phrase must now be about the voice, a bare command, or an order about "it".
+- "The word Cuban is pronounced wrong" taught "Cuban" the pronunciation "wrong": complaints ("wrong", "incorrectly",
+  "differently", …) are never respellings.
+
 ### Fixed
 - Ordinary sentences were taught as pronunciations ("also read that series what is another good one" would have saved a
   pronunciation for "also"): teaching needs "pronounced", "said/spoken/read like|as", "say/pronounce X like|as Y", "X
