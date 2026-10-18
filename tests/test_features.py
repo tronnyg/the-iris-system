@@ -55,7 +55,7 @@ def test_native_tool_calls_and_spoken_filler(monkeypatch):
     seen = []
     c = conv(NativeLLM())
     c.on_tool = lambda name, args: seen.append((name, args))
-    r = c.respond("what's the weather in cape town", speak=False)
+    r = c.respond("is it going to be sunny in cape town tomorrow", speak=False)
     assert r.spoken.startswith("Let me look that up.") and "sunny" in r.spoken
     assert seen == [("web_search", {"query": "Cape Town weather"})]
 

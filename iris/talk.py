@@ -371,8 +371,9 @@ class Session:
                 pass
 
     def _on_tool(self, name: str, args: dict) -> None:
-        what = args.get("query") or args.get("expression") or ""
-        label = {"web_search": "searching the web", "calculator": "calculating", "current_time": "checking the time"}
+        what = args.get("query") or args.get("expression") or args.get("text") or args.get("list") or ""
+        label = {"web_search": "searching the web", "calculator": "calculating", "current_time": "checking the time",
+                 "add_to_list": "adding to your list", "show_list": "reading your list"}
         msg = f"{label.get(name, name)}{': ' + str(what) if what else ''}"
         self.writer.event("tool", name=name, args=args)
         self.bus.publish("tool", name=name, label=msg)

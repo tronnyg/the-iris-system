@@ -37,7 +37,7 @@ def test_list_command_is_handled_before_the_llm(fake_llm):
     llm = fake_llm("should not be called")
     c = Conversation(Settings.load(), llm, None, None, TraceWriter(), Memory())
     r = c.respond("add a unit converter to my feature list", speak=False)
-    assert r.spoken == "Added to your feature list." and not llm.calls
+    assert r.spoken == "Added to your feature list: a unit converter." and not llm.calls
     assert lists.items("features")[0]["text"] == "a unit converter"
 
 

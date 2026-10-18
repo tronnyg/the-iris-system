@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import fastpath, lists, ollama_ctl, selfstore
+from . import actions, fastpath, lists, ollama_ctl, selfstore
 from .config import Settings
 from .llm import Cancel, LLMError, LLMStats, Ollama
 from .memory import Delta, Memory, forget_command, remember_command
@@ -190,6 +190,8 @@ class Conversation:
         self.on_interrupt = on_interrupt or (lambda reason: None)
         self.fallbacks_tried: set[str] = set()
         self._clean_replies: dict[str, int] = {}
+        self.awaiting_search_until = 0.0     # IRIS asked what to search for: the next utterance is the topic
+        self.prev_user_text = ""
         if model_traits(getattr(llm, "model", "")).get("leaks"):
             self._switch_model(reason="known to leak its reasoning")
         self.commit_memory = commit_memory
@@ -243,7 +245,10 @@ class Conversation:
         """
         if len(self.history) - self.ctx_start > 2 * max_turns:
             self.ctx_start = len(self.history) - 2 * max(1, (max_turns + 1) // 2)
-        return self.history[self.ctx_start:]
+        # an honest note on replies that claimed an action no tool took, so the claim isn't
+        # taken as precedent ("I searched" in the history made later tool calls less likely)
+        return [{"role": m["role"], "content": m["content"] + f" [note: {m['_note']}]"} if m.get("_note") else m
+                for m in self.history[self.ctx_start:]]
 
     # -- commands -----------------------------------------------------------------------
     def handle_command(self, text: str) -> str | None:
@@ -258,7 +263,8 @@ class Conversation:
             fb, note = parsed
             self.writer.feedback(self.turn_no, fb, note=note)
             return "Noted. I'll learn from that." if fb == "bad" else "Noted."
-        said = lists.command(text, session=self.writer.session, turn=self.turn_no or None)
+        said = lists.command(text, session=self.writer.session, turn=self.turn_no or None,
+                             resolver=lambda: lists.resolve_item(self.llm, self.history))
         if said:                        # "add X to my feature list" (before "remember ...")
             self.writer.event("list", text=text, said=said)
             return said
@@ -301,6 +307,17 @@ class Conversation:
         s = self.s
         fast = fastpath.answer(user_text) if (s.pod.get("fastpath") or {}).get("enabled", True) else None
         llm = _Canned(fast[1], self.llm.model) if fast else self.llm
+        lists.context(self.writer.session, turn)
+        # an explicit "search ..." (or a topic IRIS just asked for) runs the tool directly: a
+        # small model skips the tool call often enough to matter (see iris/actions.py)
+        web = self.tools.get("web_search")
+        forced = None
+        if web and not fast:
+            awaiting = time.time() < self.awaiting_search_until
+            q = actions.detect_search(user_text, awaiting, self.prev_user_text)
+            if q:
+                forced = (web, {"query": q})
+            self.awaiting_search_until = 0.0
         history_turns = int(s.knob("llm.history_turns", 12))
         messages = self.memory.build_messages(s.system_prompt, self.context(history_turns), user_text)
         # today's date (stable all day, so the prompt cache survives); tools for anything newer
@@ -386,10 +403,20 @@ class Conversation:
                 kw = {}
                 if native and round_no < 2:
                     kw = {"tools": [t.schema() for t in self.tools.values()], "tool_calls": calls}
+                forced_now = forced if round_no == 0 else None
+                if forced_now:                                    # no model call: the search is the first step
+                    ft, fargs = forced_now
+                    if native:
+                        calls.append({"function": {"name": ft.name, "arguments": fargs}})
+                    else:
+                        held = ft.text_form.replace(ft.text_arg.upper(), str(fargs.get(ft.text_arg, ""))) if ft.text_arg else ft.text_form
+                    hold = False
                 # a held first sentence delays the voice by that sentence: only models that
                 # haven't been verified clean (bench probe, or a few clean replies) get it
                 guard = LeakGuard() if round_no == 0 and not fast and self._needs_leak_guard() else None
-                for delta in llm.stream(msgs, options=options, cancel=live.cancel, stats=stats, **kw):
+                recovered = False
+                stream = iter(()) if forced_now else llm.stream(msgs, options=options, cancel=live.cancel, stats=stats, **kw)
+                for delta in stream:
                     if timing.get("first_token") is None:
                         timing["first_token"] = time.perf_counter() - t0
                     raw.append(delta)
@@ -415,8 +442,10 @@ class Conversation:
                         hold, delta = False, held
                     for c in splitter.feed(think.feed(delta)):
                         emit(c)
-                found = []
-                if calls:
+                found = [forced_now] if forced_now else []
+                if forced_now:
+                    pass
+                elif calls:
                     for c in calls:
                         fn = c.get("function") or {}
                         t = self.tools.get(fn.get("name"))
@@ -435,10 +464,25 @@ class Conversation:
                     else:                              # looked like a tool call but wasn't: say it
                         for c in splitter.feed(think.feed(held)):
                             emit(c)
+                if (not found and not leaked and round_no == 0 and web and not fast and not live.cancel.is_set()
+                        and actions.announces_search("".join(round_raw))):
+                    # it said it would search but never called the tool: do it now
+                    q = actions.clean_query(user_text) or actions.clean_query(self.prev_user_text)
+                    if q:
+                        found, recovered = [(web, {"query": q})], True
+                        if native:
+                            calls.append({"function": {"name": "web_search", "arguments": found[0][1]}})
                 if leaked or not found or live.cancel.is_set():
                     break
+                if guard is not None and guard.lead and not leaked:      # held first sentence goes out before the tool runs
+                    self._note_clean_reply()
+                    for c in splitter.feed(think.feed(guard.lead)):
+                        emit(c)
+                    guard = None
                 for c in splitter.flush():             # anything said before the tool call
                     emit(c)
+                if recovered:
+                    said_first = True                  # it already announced the search
                 results = []
                 for t, args in found:
                     if t.say_first and not said_first:
@@ -529,12 +573,19 @@ class Conversation:
             barge = {"at_s": round(played, 2),
                      "fraction": round(played / total, 3) if total else None}
         cancelled = live.reason if live.reason and live.reason != "barge_in" else None
+        claims = actions.false_claims(" ".join(chunks), [tr.name for tr in tool_runs], user_text) if not fast else []
 
         spoken = strip_cues(" ".join(spoken_chunks)).strip()
         if cancelled != "resume":
             self.history.append({"role": "user", "content": user_text})
-            self.history.append({"role": "assistant",
-                                 "content": spoken + (" ..." if barge else "") if spoken else "(no reply)"})
+            msg = {"role": "assistant", "content": spoken + (" ..." if barge else "") if spoken else "(no reply)"}
+            if claims:
+                msg["_note"] = " ".join(actions.NOTES[k] for k in claims)
+                self._record_false_claims(claims, user_text, spoken)
+            self.history.append(msg)
+            self.prev_user_text = user_text
+            if actions.asked_for_topic(spoken):
+                self.awaiting_search_until = time.time() + 90
 
         rec = {
             "turn": turn, "mode": mode, "audio_in": audio_in, "user_text": user_text,
@@ -546,6 +597,10 @@ class Conversation:
             "playback": playback, "barge_in": barge, "cancelled": cancelled, "error": error,
             "tools": [tr.as_dict() for tr in tool_runs] or None,
             "fastpath": fast[0] if fast else None,
+            "forced": ("search" if forced else None) or ("recovered-search" if any(
+                tr.name == "web_search" for tr in tool_runs) and not forced and actions.announces_search(
+                    "".join(raw)) else None),
+            "false_claim": claims or None,
             "config": {"self": selfstore.head(), "knobs": s.knobs(),
                        "persona": s.persona_name,
                        "models": {"llm": self.llm.model, "stt": (stt or {}).get("model"), "tts": engine or None}},
@@ -557,6 +612,17 @@ class Conversation:
         except Exception as e:
             log.warning("on_turn callback failed: %s", e)
         return TurnResult(record=rec, spoken=spoken, cancelled=cancelled)
+
+    def _record_false_claims(self, claims: list[str], user_text: str, spoken: str) -> None:
+        log.warning("reply claimed an action nothing took (%s): %r", ",".join(claims), spoken[:80])
+        try:
+            from .improve import insights
+            what = {"search": "searched", "list": "added something to a list", "voice": "would change its voice"}
+            insights.add("intelligence", "failure-cluster", "IRIS claimed an action that never happened",
+                         [f"claimed ({'/'.join(what[k] for k in claims)}): {spoken[:160]!r} after {user_text[:100]!r}"],
+                         source="pipeline", confidence="high")
+        except Exception:
+            pass
 
     def _needs_leak_guard(self) -> bool:
         return model_traits(self.llm.model).get("leaks") is not False      # unknown or known-leaky
