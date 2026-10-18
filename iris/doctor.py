@@ -130,6 +130,18 @@ def run(full: bool = False) -> bool:
                 good = False
                 _line(BAD, f"LLM test failed: {e}")
 
+    # GPU memory: does the chosen voice fit next to the language model? (see iris/vram.py)
+    from . import vram
+    mem = vram.gpu_memory()
+    if mem:
+        engine = s.model("tts_engine", "kokoro")
+        v = vram.check(engine, s, ol if ol.available() else None, mem)
+        if v.changed:
+            _line(WARN, f"GPU memory: {mem[0] / 1024:.1f} of {mem[1] / 1024:.1f} GB free", v.reason[0].upper() + v.reason[1:])
+        else:
+            _line(OK, f"GPU memory: {mem[0] / 1024:.1f} of {mem[1] / 1024:.1f} GB free; the {engine} voice "
+                      f"(~{vram.engine_need_mb(engine, s) / 1024:.1f} GB) fits next to the language model")
+
     # Whisper
     try:
         from faster_whisper.utils import _MODELS

@@ -221,6 +221,11 @@ class Night:
             if not teacher._engine_available(engine):
                 out["engines"][engine] = {"available": False}
                 continue
+            from .. import vram
+            fit = vram.check(engine, self.settings, Ollama(self.settings.model("llm", "qwen3:4b")))
+            if fit.engine != engine:                     # would run the GPU out of memory next to the LLM
+                out["engines"][engine] = {"available": False, "reason": fit.reason}
+                continue
             tts = make_tts(engine)
             try:
                 tts.load(engine_load_options(self.settings, engine), opts=synth_opts(self.settings, engine))

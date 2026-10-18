@@ -392,8 +392,17 @@ def cmd_say(a) -> None:
     from .tts.client import engine_load_options, make_tts, synth_opts
     s = _settings()
     engine = a.engine or s.model("tts_engine", "kokoro")
+    from . import vram
+    from .llm import Ollama
+    fit = vram.check(engine, s, Ollama(s.model("llm", "qwen3:4b")))
+    if fit.changed:
+        print("note: " + fit.reason)
+        engine = fit.engine
     tts = make_tts(engine)
-    info = tts.load(engine_load_options(s, engine), opts=synth_opts(s, engine) if engine != "tone" else {})
+    load_opts = engine_load_options(s, engine)
+    if fit.device:
+        load_opts["device"] = fit.device
+    info = tts.load(load_opts, opts=synth_opts(s, engine) if engine != "tone" else {})
     print(f"{engine}: {info}")
     pron = Pronouncer(s.pronunciations, s.pron_rules.get(engine, []), respell=s.respell, engine=engine)
     res = tts.synth(pron.apply(a.text), float(s.knob("tts.speed", 1.0)), synth_opts(s, engine) if engine != "tone" else {})

@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import actions, fastpath, lists, lookups, ollama_ctl, selfstore
+from . import actions, fastpath, garble, lists, lookups, ollama_ctl, selfstore
 from .config import Settings
 from .llm import Cancel, LLMError, LLMStats, Ollama
 from .memory import Delta, Memory, forget_command, remember_command
@@ -201,6 +201,8 @@ class Conversation:
         self._nudge = False
         self.awaiting_search_until = 0.0     # IRIS asked what to search for: the next utterance is the topic
         self.awaiting_list: tuple[str, float] | None = None   # IRIS asked what to add to this list (until ts)
+        self.pending_heard: tuple[str, float] | None = None   # IRIS asked "did you say ...?" (text, until ts)
+        self._asked_last = False
         self.prev_user_text = ""
         if model_traits(getattr(llm, "model", "")).get("leaks"):
             self._switch_model(reason="known to leak its reasoning")
@@ -306,6 +308,30 @@ class Conversation:
             self._commit(f"memory: forget '{target}'", changes)
         return None
 
+    def _confirm_garbled(self, text: str, stt: dict | None) -> tuple[str, str | None]:
+        """(text to use, something to say instead of answering). A low-confidence transcript is read back as
+        a question; the next "yes" runs it, "no" drops it, anything else is simply the new request."""
+        pending, self.pending_heard = self.pending_heard, None
+        if pending and time.time() <= pending[1]:
+            answer = garble.yes_no(text)
+            if answer == "yes":
+                self._asked_last = False
+                self.writer.event("garble_confirmed", text=pending[0])
+                return pending[0], None
+            if answer == "no":
+                self._asked_last = False
+                self.writer.event("garble_rejected", text=pending[0])
+                return text, "Sorry about that. Say it again?"
+        thr = (self.s.pod.get("stt") or {}).get("confirm_logprob", garble.DEFAULT_LOGPROB)
+        prev = next((m.get("content", "") for m in reversed(self.history) if m.get("role") == "assistant"), "")
+        if not self._asked_last and garble.suspect(text, stt, thr, prev):
+            self.pending_heard = (text, time.time() + 25)
+            self._asked_last = True              # never twice in a row: if it is still unsure, just answer
+            self.writer.event("garble_ask", text=text, logprob=round(stt["avg_logprob"], 2))
+            return text, garble.question(text)
+        self._asked_last = False
+        return text, None
+
     def _pronunciation_command(self, text: str) -> str | None:
         """"The word cumin is pronounced koo-min": saved, applied at once, and spoken back to confirm."""
         from .textproc import respell
@@ -359,6 +385,10 @@ class Conversation:
                 audio_in: str | None = None, stt_done_s: float | None = None,
                 speak: bool = True) -> TurnResult:
         t0 = t_end or time.perf_counter()
+        user_text, said = self._confirm_garbled(user_text, stt)
+        if said is not None:
+            self._say_simple(said, speak)
+            return TurnResult(record={}, spoken=said)
         ack = self.handle_command(user_text)
         if ack is not None:          # feedback isn't a conversational turn
             self._say_simple(ack, speak)

@@ -110,6 +110,15 @@ more"). `iris session` shows what happened in a conversation and what cost you t
 
 **Faster ears:** `iris set model stt moonshine/base` switches to Moonshine (about 0.1-0.3 s per
 utterance here vs ~0.55 s for Whisper base.en; speech over 12 s goes to Whisper automatically); the night loop compares both on your voice.
+
+**More accurate ears (GPU):** a model name ending in `@gpu` runs that Whisper on the graphics card (int8), e.g. `iris set model stt large-v3-turbo@gpu`.
+Measured on 202 of your own recordings, graded against the large model's beam-5 transcript (word error rate, lower is better; the large model is
+the reference, so its own score is optimistic): live Moonshine 24%, Moonshine 26% (0.17 s), Whisper base.en 23% (0.57 s CPU / 0.07 s GPU),
+small.en 18% (1.6 s CPU / **0.17 s GPU**), large-v3-turbo **5% at 0.59 s median (0.83 s p90) on the GPU** and about 1.1 GB. It is the fix for
+"level higher" being heard as "no, but hi". It fits beside gemma4 (~3 GB) and Kokoro; a startup check (`iris/vram.py`) moves the recogniser to the CPU
+(Moonshine) if the card is too full, and the CUDA 12 libraries are borrowed from the Kokoro environment, nothing extra to install.
+With a Whisper model IRIS also asks "Did you say ...?" when the transcript is very unsure (average log-probability below `stt.confirm_logprob`,
+-0.9; about 5% of turns, 82-100% of those were really wrong), and "yes" / "no" answers it. Moonshine has no confidence score, so it never asks.
 Time, date and arithmetic questions are answered instantly without the LLM.
 
 **Models that think out loud** (some Qwen3 builds ignore "thinking off"): IRIS never speaks the
@@ -243,4 +252,4 @@ iris agent list|new
 - Whisper can't tell you *how* it misheard; the overnight teacher model isn't perfect either. The report lists disagreements to spot-check.
 - Only you can judge how natural a voice sounds. `iris rate` exists because no metric can.
 - Echo: hands-free mode ignores the mic while speaking (half-duplex). Interrupt with Enter or the hotkey. Headphones work best.
-- Chatterbox (~3 GB) plus qwen3:4b (~3.5 GB) together use most of the 8 GB card. Kokoro leaves plenty of room.
+- Chatterbox (~3 GB) plus the language model use most of the 8 GB card. Kokoro leaves plenty of room. Before loading anything, IRIS checks the free GPU memory (`iris/vram.py`): a voice that won't fit next to the model is replaced by Kokoro (or Kokoro on the CPU if even that won't fit), with the reason printed, logged and said once. `iris doctor` shows the same check; sizes are learned from real loads and can be overridden with `tts.<engine>.vram_mb` in pod.yaml.
