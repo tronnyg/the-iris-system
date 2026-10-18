@@ -64,7 +64,7 @@ wake:
   follow_up_s: 12         # stay awake this long after each reply, so follow-ups need no wake word
 
 tools:
-  enabled: [web_search, calculator, current_time, add_to_list, show_list]
+  enabled: [web_search, calculator, current_time, add_to_list, show_list, wikipedia, exchange_rate, weather]
   searxng_url: null       # your own SearXNG (fully self-hosted search); null = DuckDuckGo via ddgs
   max_results: 5
 

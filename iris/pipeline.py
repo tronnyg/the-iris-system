@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import actions, fastpath, lists, ollama_ctl, selfstore
+from . import actions, fastpath, lists, lookups, ollama_ctl, selfstore
 from .config import Settings
 from .llm import Cancel, LLMError, LLMStats, Ollama
 from .memory import Delta, Memory, forget_command, remember_command
@@ -370,6 +370,8 @@ class Conversation:
 
         s = self.s
         fast = fastpath.answer(user_text) if (s.pod.get("fastpath") or {}).get("enabled", True) else None
+        if not fast and (s.pod.get("lookups") or {}).get("enabled", True):
+            fast = lookups.answer(user_text, s)         # units, time zones, rates, weather, Wikipedia: exact, never paraphrased
         llm = _Canned(fast[1], self.llm.model) if fast else self.llm
         lists.context(self.writer.session, turn, user_text)
         # an explicit "search ..." (or a topic IRIS just asked for) runs the tool directly: a
@@ -647,7 +649,8 @@ class Conversation:
             barge = {"at_s": round(played, 2),
                      "fraction": round(played / total, 3) if total else None}
         cancelled = live.reason if live.reason and live.reason != "barge_in" else None
-        claims = actions.false_claims(" ".join(chunks), [tr.name for tr in tool_runs], user_text) if not fast else []
+        grounding = " ".join(tr.result for tr in tool_runs if tr.name in actions.GROUNDED and tr.ok)
+        claims = actions.false_claims(" ".join(chunks), [tr.name for tr in tool_runs], user_text, grounding) if not fast else []
 
         spoken = strip_cues(" ".join(spoken_chunks)).strip()
         if cancelled != "resume":
@@ -691,7 +694,8 @@ class Conversation:
         log.warning("reply claimed an action nothing took (%s): %r", ",".join(claims), spoken[:80])
         try:
             from .improve import insights
-            what = {"search": "searched", "list": "added something to a list", "voice": "would change its voice"}
+            what = {"search": "searched", "list": "added something to a list", "voice": "would change its voice",
+                    "pronounce": "would pronounce differently", "number": "gave figures the tool didn't"}
             insights.add("intelligence", "failure-cluster", "IRIS claimed an action that never happened",
                          [f"claimed ({'/'.join(what[k] for k in claims)}): {spoken[:160]!r} after {user_text[:100]!r}"],
                          source="pipeline", confidence="high")

@@ -54,7 +54,7 @@ the data IRIS collected:
 | `iris/pipeline.py` | one turn: LLM stream -> sanitize -> split -> TTS -> playback; commands (ratings, lists, memory, voice) |
 | `iris/web/` | browser UI (stdlib server, SSE, `static/core.js` ASCII neural core, `static/app.js`) |
 | `iris/turn.py` | Silero speech detection + Smart Turn end-of-turn model (used by `audio.EnergyVAD`) |
-| `iris/actions.py`, `iris/fastpath.py` | do what is said (forced/recovered search, false-claim detection); instant time/date/maths answers |
+| `iris/actions.py`, `iris/fastpath.py`, `iris/lookups.py` | do what is said (forced/recovered search, false-claim detection); instant time/date/maths answers; exact units, time zones, rates, weather, Wikipedia (`tools/lookup.py` has the APIs) |
 | `iris/textproc/respell.py` | pronunciations taught by voice (respelling -> phonemes, saved in pronunciations.yaml) |
 | `iris/voicefx.py` | live voice commands (long dictated requests, magnitudes) and rendering (chunk trimming, gaps, per-sentence variety) |
 | `iris/improve/night.py` | night/idle stages; `bench.py`, `insights.py` (findings + dossier), `sleep.py` (reflection) |
