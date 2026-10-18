@@ -34,6 +34,7 @@
     if (DEMO) c.unshift(["DEMO", false]);
     $("#chips").innerHTML = c.map(([t, on]) => `<span class="chip ${on ? "on" : ""}">${esc(t)}</span>`).join("");
     $("#name").textContent = (i.name || "IRIS").toUpperCase();
+    core.meta = { ...core.meta, model: (i.models || {}).llm || core.meta.model };
     $("#persona").textContent = i.persona ? `/ ${i.persona}` : "";
     $("#session").textContent = i.session ? `session ${i.session}` : "";
   }
@@ -111,6 +112,8 @@
       ["good", "ok", "bad"].map((v) => `<button data-v="${v}" title="rate ${v}">${{ good: "+", ok: "=", bad: "−" }[v]}</button>`).join("") + "</span>";
     e.done = true;
     S.lastTurn = t.turn || S.lastTurn;
+    core.meta = { ...core.meta, model: (t.llm && t.llm.model) || core.meta.model, tok_s: t.llm && t.llm.tok_s,
+                  first_audio: t.timing && t.timing.first_audio, turns: (core.meta.turns || 0) + 1 };
     S.turns.push(t);
     S.turns = S.turns.slice(-10);
     latency();
@@ -464,5 +467,7 @@
   if (qs.get("solo") === "1") document.body.classList.add("solo");   // open straight into full screen
   if (qs.get("tab")) setTimeout(() => { const b = document.querySelector(`.tabs button[data-tab="${qs.get("tab")}"]`); if (b) b.click(); }, 50);
   if (DEMO) demo();
+  // dev: ?ff=N fast-forwards the core N frames (headless browsers barely run animation frames)
+  if (qs.get("ff")) { for (let i = 0; i < Number(qs.get("ff")); i++) { core.t += 1 / 30; core.step(1 / 30); } core.draw(); }
   else { connect(); refresh(); setInterval(refresh, 20000); setState("idle", 0, 0); }
 })();
