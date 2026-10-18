@@ -8,6 +8,14 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
 
 ## [Unreleased]
 
+### Added
+- The autopilot supervisor (`iris autopilot ...`, `iris/autopilot/`, ADR-0034, architecture page 15): runs a free-tier coding
+  agent (Codex through the local freellmapi gateway) in a bubblewrap sandbox on a clone of `variant/autopilot`, hands it a
+  redacted dossier, then keeps the night only if the fence holds and the referees pass (tests, replay holdout within
+  2 points, variant changelog). Accepted nights are tagged and reversible; the nightly timer exists only after
+  `iris autopilot enable`.
+- Variant registry field `sync: supervisor`: `iris branch sync` leaves such a variant to its own supervisor.
+
 ### Docs
 - The autopilot variant is registered (`docs/variants.yaml`), ADR-0028 accepted (free control inside a fence, via freellmapi, redacted history, local-only runtime), and `docs/plans/autopilot-variant.md` rewritten to the approved design.
 

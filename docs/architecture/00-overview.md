@@ -241,6 +241,20 @@ Kept complete by `tests/test_docs.py`: a new module without a row here fails the
 | `iris/improve/insights.py` | findings and the dossier for Claude Code | [08](08-learning-loops.md) |
 | `iris/improve/report.py` | the morning report | [08](08-learning-loops.md) |
 | `iris/improve/review.py` | proposals review/approve/reject, rollback, `iris rate` | [08](08-learning-loops.md) |
+| `iris/autopilot/__init__.py` | package marker: the supervisor of the autopilot variant | [15](15-autopilot.md) |
+| `iris/autopilot/config.py` | defaults, paths and state of the autopilot (`autopilot/config.yaml`, frozen-file list) | [15](15-autopilot.md) |
+| `iris/autopilot/ledger.py` | tokens and provider errors per night; budget and stop-on-errors decisions | [15](15-autopilot.md) |
+| `iris/autopilot/redact.py` | personal details → placeholders before anything is sent to the worker | [15](15-autopilot.md) |
+| `iris/autopilot/gateway.py` | freellmapi client: catalog, probes, `doctor` | [15](15-autopilot.md) |
+| `iris/autopilot/sandbox.py` | bubblewrap command builder (home hidden, network on/off) | [15](15-autopilot.md) |
+| `iris/autopilot/fence.py` | frozen files, new network use, secrets, isolation checks on the worker's diff | [15](15-autopilot.md) |
+| `iris/autopilot/workspace.py` | the worker's git clone, venv, pinned scorer, Codex config, sync/accept/reject | [15](15-autopilot.md) |
+| `iris/autopilot/referees.py` | tests, holdout score and changelog checks | [15](15-autopilot.md) |
+| `iris/autopilot/prompt.py` | the worker's standing instructions | [15](15-autopilot.md) |
+| `iris/autopilot/night.py` | one supervised night: dossier, worker, fence, referees, accept or reject | [15](15-autopilot.md) |
+| `iris/autopilot/digest.py` | the morning digest of a night | [15](15-autopilot.md) |
+| `iris/autopilot/timer.py` | the nightly systemd user timer (opt-in) | [15](15-autopilot.md) |
+| `iris/autopilot/cli.py` | `iris autopilot ...` subcommands | [15](15-autopilot.md) |
 | `iris/web/__init__.py` | package marker | 10 |
 | `iris/web/server.py` | stdlib HTTP server: static files, SSE, commands, snapshots | [10](10-web-ui.md) |
 
@@ -259,5 +273,6 @@ Static web files (`iris/web/static/index.html`, `app.js`, `core.js`, `style.css`
 | debug from data | [11](11-observability.md) → [12](12-data-and-files.md) |
 | change a setting | [13](13-configuration-reference.md) |
 | develop, test, branch | [14](14-development.md) and [../BRANCHING.md](../BRANCHING.md) |
+| understand or run the autopilot trial | [15](15-autopilot.md) |
 | rebuild it somewhere else | [../REBUILD.md](../REBUILD.md) |
 | know *why* it is built this way | [../adr/](../adr/README.md) |

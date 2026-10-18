@@ -34,6 +34,7 @@ Global options: `--agent NAME`, `-v`.
 | `rollback [SHA]` | undo the latest (or given) automatic change |
 | `log` | self-store history (`-n`) |
 | `rate` | blind A/B listening test between voices |
+| `autopilot` | `status | doctor | init | run [--force] | pause | resume | stop | enable | disable | reset TAG | report` (the supervised free-model trial, [15](15-autopilot.md)) |
 | `branch` | `status | start TYPE/TOPIC | finish --yes | sync [NAME] | unblock NAME` |
 | `status` | what's configured and pending |
 | `doctor` | check every part (`--full` loads every model once) |

@@ -58,3 +58,4 @@ decision was made.
 | [0031](0031-small-en-gpu-live-recogniser.md) | small.en on the GPU as the live recogniser | Accepted | 2026-10-18 |
 | [0032](0032-replay-benchmark-as-the-gate.md) | The replay benchmark is the gate for automated code changes | Accepted | 2026-10-18 |
 | [0033](0033-rule-mining-proposes-never-applies.md) | Rule mining proposes; it never applies | Accepted | 2026-10-19 |
+| [0034](0034-autopilot-supervisor-and-sandbox.md) | The autopilot is a supervisor outside the code it edits, with a sandbox and frozen referees | Accepted | 2026-10-19 |

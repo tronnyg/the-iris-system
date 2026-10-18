@@ -2,7 +2,7 @@
 
 - **Status:** accepted 2026-10-19 ([ADR-0028](../adr/0028-proposed-cloud-autopilot-variant.md)); being built
 - **Runs as:** `variant/autopilot` (mode `auto`, registered in [variants.yaml](../variants.yaml)), agent `iris-trial`
-- **Supervisor:** the `iris/autopilot/` package on `main` (the variant's agent cannot edit it); architecture page 15 is written when it is built
+- **Supervisor:** the `iris/autopilot/` package on `main` (the variant's agent cannot edit it); described in [architecture/15](../architecture/15-autopilot.md); the supervisor is built, the first real night is still to run
 
 ## The idea
 
