@@ -14,4 +14,11 @@
 #     agent: iris-trial          # the IRIS agent (self store) it runs against, so main's agent is untouched
 #     created: 2026-10-18
 #     retired: false             # true when the experiment is over (the branch is then deleted)
-variants: []
+variants:
+  - name: autopilot
+    mode: auto
+    purpose: "~2-week trial: a strong free-tier model improves IRIS on its own, inside a fence (docs/plans/autopilot-variant.md)"
+    owner: autopilot
+    agent: iris-trial
+    created: 2026-10-19
+    retired: false

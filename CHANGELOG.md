@@ -8,6 +8,9 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
 
 ## [Unreleased]
 
+### Docs
+- The autopilot variant is registered (`docs/variants.yaml`), ADR-0028 accepted (free control inside a fence, via freellmapi, redacted history, local-only runtime), and `docs/plans/autopilot-variant.md` rewritten to the approved design.
+
 ### Added
 - Rule mining (night stage `mine`, ADR-0033): recurring mishearings (≥ 3 clips, not right elsewhere, not already fixed) become
   proposed `stt.corrections`; list requests the phrase matcher couldn't parse and turns that went wrong (corrected, repeated,

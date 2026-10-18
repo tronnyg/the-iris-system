@@ -1,6 +1,6 @@
 # Plan (parked): make IRIS smarter through code
 
-- **Status:** parked (not approved for building yet)
+- **Status:** partly done: the replay benchmark ([ADR-0032](../adr/0032-replay-benchmark-as-the-gate.md)) and rule mining ([ADR-0033](../adr/0033-rule-mining-proposes-never-applies.md)) are merged; the rest feeds the autopilot variant
 - **Written:** 2026-10-18
 - **Related:** [ADR-0014](../adr/0014-deterministic-skills-before-the-model.md), [ADR-0027](../adr/0027-rejected-local-coding-agent.md)
 

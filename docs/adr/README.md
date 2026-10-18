@@ -52,7 +52,7 @@ decision was made.
 | [0025](0025-explicit-network-lookups.md) | Network lookups only on explicit request | Accepted | 2026-10-18 |
 | [0026](0026-rejected-kokoro-prosody-markup.md) | Kokoro prosody markup for emphasis | Rejected | 2026-10-18 |
 | [0027](0027-rejected-local-coding-agent.md) | A local coding agent for self-improvement | Rejected | 2026-10-18 |
-| [0028](0028-proposed-cloud-autopilot-variant.md) | A free cloud-model autopilot as a variant | Proposed | 2026-10-18 |
+| [0028](0028-proposed-cloud-autopilot-variant.md) | A free cloud-model autopilot as a variant | Accepted | 2026-10-18 |
 | [0029](0029-gpu-recogniser-fallback.md) | Moonshine back as the live recogniser; GPU recogniser falls back at run time | Accepted | 2026-10-18 |
 | [0030](0030-vision-only-llm-copy.md) | Run the LLM without its audio encoder (vision kept) | Accepted | 2026-10-18 |
 | [0031](0031-small-en-gpu-live-recogniser.md) | small.en on the GPU as the live recogniser | Accepted | 2026-10-18 |
