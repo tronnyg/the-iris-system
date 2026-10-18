@@ -474,6 +474,7 @@
   if (qs.get("tab")) setTimeout(() => { const b = document.querySelector(`.tabs button[data-tab="${qs.get("tab")}"]`); if (b) b.click(); }, 50);
   if (DEMO) demo();
   // dev: ?ff=N fast-forwards the core N frames (headless browsers barely run animation frames)
+  if (qs.get("perf")) core.debug = true;     // ?perf=1 shows the core's frame cost and detail level
   if (qs.get("ff")) { for (let i = 0; i < Number(qs.get("ff")); i++) { core.t += 1 / 30; core.step(1 / 30); } core.draw(); }
   else { connect(); refresh(); setInterval(refresh, 20000); setState("idle", 0, 0); }
 })();

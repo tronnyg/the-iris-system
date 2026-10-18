@@ -8,7 +8,7 @@
   const RGB = {
     aqua: [142, 192, 124], green: [184, 187, 38], yellow: [250, 189, 47], orange: [254, 128, 25],
     red: [251, 73, 52], purple: [211, 134, 155], gray: [146, 131, 116], fg: [235, 219, 178],
-    blue: [131, 165, 152], bg3: [102, 92, 84], aquaD: [104, 157, 106], yellowD: [215, 153, 33],
+    blue: [131, 165, 152], bg3: [102, 92, 84], aquaD: [104, 157, 106], yellowD: [215, 153, 33], fg2: [213, 196, 161],
   };
   // primary / secondary colour per state
   const PALETTE = {
@@ -17,7 +17,11 @@
   };
   const LEVELS = 12;
   // colour keys: fixed colours, or the (blended) state primary / secondary
-  const K_DIM = 0, K_STATE = 1, K_HI = 2, K_NET = 3, K_ACC = 4, K_HOT = 5, K_PURPLE = 6;
+  const K_DIM = 0, K_STATE = 1, K_HI = 2, K_NET = 3, K_ACC = 4, K_HOT = 5, K_PURPLE = 6,
+        K_YEL = 7, K_GRN = 8, K_AQU = 9, K_BLU = 10, K_ORA = 11, K_FG2 = 12;
+  const FIXED = { [K_DIM]: "gray", [K_HI]: "fg", [K_HOT]: "red", [K_PURPLE]: "purple", [K_YEL]: "yellow",
+                  [K_GRN]: "green", [K_AQU]: "aqua", [K_BLU]: "blue", [K_ORA]: "orange", [K_FG2]: "fg2" };
+  const WHEEL = [K_HOT, K_ORA, K_YEL, K_GRN, K_AQU, K_BLU, K_PURPLE];     // the gruvbox colour wheel
   const MOTION = {        // rotation, signal rate, ring speed, brightness, arcs per second
     booting: { rot: 0.9, rate: 6, ring: 0.8, glow: 0.8, arcs: 2 },
     idle: { rot: 0.12, rate: 1.4, ring: 0.06, glow: 0.82, arcs: 0 },
@@ -106,7 +110,7 @@
 
     // -- the neuron cloud (unit sphere, built once) -------------------------------------
     build() {
-      const n = 120, nodes = [];
+      const n = 300, nodes = [];
       for (let i = 0; i < n; i++) {
         const y = 1 - 2 * (i + 0.5) / n, r = Math.sqrt(1 - y * y), ph = i * 2.399963;
         const inner = Math.random() < 0.22;
@@ -130,7 +134,11 @@
       edges.forEach(([a, b], e) => { this.adj[a].push(e); this.adj[b].push(e); });
       this.outer = nodes.map((m, i) => [i, m.rr]).filter((p) => p[1] > 0.85).map((p) => p[0]);
       this.inner = nodes.map((m, i) => [i, m.rr]).filter((p) => p[1] < 0.65).map((p) => p[0]);
-      this.stars = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random(), z: rand(0.2, 1), tw: rand(0, 6.3) }));
+      this.stars = Array.from({ length: 180 }, () => ({ x: Math.random(), y: Math.random(), z: rand(0.2, 1), tw: rand(0, 6.3) }));
+      const ck = [K_STATE, K_ACC, K_YEL, K_AQU, K_ORA];
+      this.crypts = Array.from({ length: 170 }, (_, i) => ({ r: rand(0.15, 0.95), a: rand(0, Math.PI * 2), k: Math.random(),
+        ch: ["∘", "·", "◦", "∙"][i % 4], v: rand(0.35, 0.75), key: ck[i % ck.length] }));
+      this.detail = 1;                                            // lowered automatically if frames get slow
     }
 
     resize() {
@@ -140,7 +148,7 @@
       this.cv.width = Math.round(w * dpr); this.cv.height = Math.round(h * dpr);
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // full view uses a finer grid: more cells, so the eye can carry real detail
-      const fs = this.compact ? clamp(Math.round(Math.min(w, h) / 36), 9, 13) : clamp(Math.round(Math.min(w, h) / 64), 10, 15);
+      const fs = this.compact ? clamp(Math.round(Math.min(w, h) / 36), 9, 13) : clamp(Math.round(Math.min(w, h) / 78), 9, 14);
       this.font = `${fs}px "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace`;
       this.ctx.font = this.font;
       this.cw = Math.ceil(this.ctx.measureText("M").width);
@@ -198,7 +206,13 @@
       this.last = ts; this.t += dt;
       if (!this.cols) return;
       this.step(dt);
+      const t0 = performance.now();
       this.draw();
+      // quality governor: keep a frame's work well under the 33 ms budget on any machine
+      const ms = performance.now() - t0;
+      this.frameCost = lerp(this.frameCost || ms, ms, 0.1);
+      if (this.frameCost > 14) this.detail = Math.max(0.4, this.detail - 0.02);
+      else if (this.frameCost < 8) this.detail = Math.min(1, this.detail + 0.005);
     }
 
     step(dt) {
@@ -326,15 +340,7 @@
       this.gaze = this.gaze || { yaw: 0, pitch: 0 };
       this.gaze.yaw = lerp(this.gaze.yaw, this.gazeT.yaw, k);
       this.gaze.pitch = lerp(this.gaze.pitch, this.gazeT.pitch, k);
-      // blink: the iris shutters closed and open again, now and then
-      if (this.blinkP == null) { this.blinkP = -1; this.blinkAt = 2; }
-      if (this.blinkP < 0 && t > this.blinkAt && st !== "asleep") this.blinkP = 0;
-      let open = st === "asleep" ? 0.08 : 1;
-      if (this.blinkP >= 0) {
-        this.blinkP += dt / 0.22;
-        open *= 1 - Math.sin(Math.min(1, this.blinkP) * Math.PI);
-        if (this.blinkP >= 1) { this.blinkP = -1; this.blinkAt = t + (Math.random() < 0.15 ? 0.3 : rand(3.5, 7)); }
-      }
+      const open = st === "asleep" ? 0.35 : 1;                // no blinking: it only narrows when asleep
       this.open = lerp(this.open == null ? 1 : this.open, open, 0.5);
       const pupil = { hearing: 0.2 + this.micS * 0.12, speaking: 0.15 + this.outS * 0.1, thinking: 0.105,
                       asleep: 0.09, booting: 0.13 }[st] || 0.155;
@@ -349,7 +355,7 @@
       const W = this.W, H = this.H, cx = W / 2, cy = H * 0.5;
       // full view: the outer tick ring (1.58R) leaves room for the edge read-outs; compact: just the eye
       const R = small ? Math.max(12, Math.min(W, H) / 2 / 1.66)
-        : Math.max(20, Math.min((W / 2 - this.cw * 18) / 1.5, (H / 2 - this.ch * 3) / 1.5)) * (this.zoom || 1);
+        : Math.max(20, Math.min((W / 2 - this.cw * 14) / 1.68, (H / 2 - this.ch * 2.2) / 1.7)) * (this.zoom || 1);
       this.R = R;
       const boot = clamp((t - 0.3) / 1.6, 0, 1);              // rings draw themselves on at start
       const wired = clamp((t - 0.9) / 1.2, 0, 1);             // synapses connect as the neurons arrive
@@ -373,7 +379,7 @@
 
       // starfield
       const px = (this.pointer ? this.pointer.x : 0) * 18, py = (this.pointer ? this.pointer.y : 0) * 12;
-      const nstars = small ? 18 : this.stars.length;
+      const nstars = small ? 18 : Math.round(this.stars.length * this.detail);
       for (let i = 0; i < nstars; i++) {
         const s = this.stars[i];
         const x = ((s.x * W + t * 3 * s.z + px * s.z) % W + W) % W, y = s.y * H + py * s.z;
@@ -394,8 +400,12 @@
         this.nodes.forEach((m, i) => { if (Math.abs(P[i][3] - sy) < 0.07) m.act = Math.max(m.act, 0.35); });
       }
       // synapses (kept out of the iris so the eye reads cleanly)
-      for (const [a, b] of this.edges) {
+      const keep = Math.round(this.detail * 10);
+      for (let e = 0; e < this.edges.length; e++) {
+        const [a, b] = this.edges[e];
+        if (small && ((a | b) & 1)) continue;                  // the mini core shows half the network
         const pa = P[a], pb = P[b], act = Math.max(this.nodes[a].act, this.nodes[b].act);
+        if (pa[2] + pb[2] < -0.6 && e % 10 >= keep && act < 0.3) continue;   // shed back synapses first
         const val = (0.1 + 0.2 * depth((pa[2] + pb[2]) / 2) + 0.45 * act) * g * wired;
         if (val <= 0) continue;
         const dx = pb[0] - pa[0], dy = pb[1] - pa[1];
@@ -430,6 +440,7 @@
       // neurons
       this.nodes.forEach((m, i) => {
         const z = P[i][2], act = m.act;
+        if (small && (i & 1)) return;
         if (z > -0.2 && inIris(P[i][0], P[i][1])) return;
         const ch = act > 0.55 ? "◉" : act > 0.25 ? "●" : z > 0.35 ? "o" : z > -0.3 ? "∘" : "·";
         const k = act > 0.25 ? K_STATE : z > 0.35 ? K_ACC : K_NET;
@@ -454,59 +465,85 @@
           if (inIris(xx, yy)) this.plot(xx, yy, " ", 0.3, K_DIM);
         }
       }
-      if (open < 0.18) {                                      // shut: a single bright lid line
+      if (open < 0.12) {                                      // shut: a single bright lid line
         for (let a = -1; a <= 1; a += this.cw / (RI * Rs)) {
           const [x, y] = eyeAt(RI * Math.abs(a) <= RI ? RI * a : 0, 0, 1);
           this.plot(x, y, "─", 0.95 * g, K_STATE);
         }
         this.plot(ex, ey, st === "asleep" ? "◇" : "◈", 0.8 * g, K_HI);
       } else {
-        ring(RI, null, 1.0 * g, K_STATE, 1.6);                  // limbus: a bright double rim
-        ring(RI * 0.95, "·", 0.7 * g, K_STATE, 1.2);
-        ring(RI * 1.09, "·", 0.38 * g, K_ACC, 0.8);             // outer halo
-        // fibres: radial strands from the pupil to the limbus, each with its own brightness
-        const fibres = small ? 18 : 32;
+        const q = this.detail;                                  // 0.4 .. 1: adaptive quality
+        ring(RI, null, 1.0 * g, K_STATE, 1.9);                  // limbus: a bright double rim
+        ring(RI * 0.965, "·", 0.75 * g, K_STATE, 1.4);
+        ring(RI * 1.08, "·", 0.4 * g, K_ACC, 1.0);              // outer halo
+        ring(RI * 1.15, "∙", 0.22 * g, K_BLU, 0.6);
+        // texture rings: faint dotted bands between pupil and rim
+        if (!small) for (const [f, key, val] of [[0.9, K_AQU, 0.32], [0.78, K_STATE, 0.3], [0.64, K_YEL, 0.3]]) {
+          ring(pr + (RI - pr) * f, "·", val * g, key, 0.9 * q, this.irisSpin * (f > 0.8 ? -0.4 : 0.3), this.irisSpin * (f > 0.8 ? -0.4 : 0.3) + Math.PI * 2);
+        }
+        // fibres: radial strands from the pupil to the limbus, warm near the pupil and the
+        // state's colour towards the rim (gruvbox heterochromia)
+        const fibres = Math.round((small ? 20 : 96) * (small ? 1 : q));
         for (let i = 0; i < fibres; i++) {
           const a = i / fibres * Math.PI * 2 + this.irisSpin;
-          const strength = 0.45 + 0.55 * Math.abs(n2(i * 1.7, 3.1));
-          const r0 = pr * 1.25, r1 = RI * (0.78 + 0.1 * Math.abs(n2(i, 7.7)));
-          const steps = Math.max(2, Math.round((r1 - r0) * Rs / Math.min(this.cw, this.ch) * 1.3));
+          const strength = 0.4 + 0.6 * Math.abs(n2(i * 1.7, 3.1));
+          const r0 = pr * 1.22, r1 = RI * (0.74 + 0.16 * Math.abs(n2(i, 7.7)));
+          const steps = Math.max(2, Math.round((r1 - r0) * Rs / Math.min(this.cw, this.ch) * 1.4));
           for (let s = 0; s <= steps; s++) {
-            const r = r0 + (r1 - r0) * s / steps;
+            const r = r0 + (r1 - r0) * s / steps, f = s / steps;
             const [x, y] = eyeAt(r, a, open), [x2, y2] = eyeAt(r + 0.02, a, open);
             const tx = x2 - x, ty = (y2 - y) * this.cw / this.ch, sl = Math.abs(ty) / (Math.abs(tx) + 1e-6);
             const gl = sl > 2.4 ? "│" : sl < 0.42 ? "─" : (tx * ty > 0 ? "╲" : "╱");
-            const fade = 0.55 + 0.45 * Math.sin(s / steps * Math.PI);
-            this.plot(x, y, gl, strength * fade * 0.85 * g, i % 3 ? K_STATE : K_ACC);
+            const fade = 0.55 + 0.45 * Math.sin(f * Math.PI);
+            const key = f < 0.22 ? (i % 2 ? K_ORA : K_YEL) : f < 0.45 ? (i % 5 === 0 ? K_YEL : K_STATE) : (i % 7 === 0 ? K_AQU : i % 3 ? K_STATE : K_ACC);
+            this.plot(x, y, gl, strength * fade * 0.88 * g, key);
           }
         }
-        // collarette: a ragged ring of crypts halfway out
-        const cn = small ? 14 : 26;
+        // crypts: little hollows scattered through the iris, slowly turning with it
+        if (!small) for (const c of this.crypts) {
+          if (c.k > q) continue;
+          const [x, y] = eyeAt(pr + (RI - pr) * c.r, c.a + this.irisSpin, open);
+          this.plot(x, y, c.ch, c.v * g, c.key);
+        }
+        // collarette: a ragged ring of crypts halfway out, in a gruvbox colour wheel
+        const cn = small ? 14 : 48;
         for (let i = 0; i < cn; i++) {
           const a = i / cn * Math.PI * 2 - this.irisSpin * 0.6;
-          const [x, y] = eyeAt(pr * 1.25 + (RI - pr) * 0.42 + 0.02 * Math.sin(i * 2.3), a, open);
-          this.plot(x, y, i % 2 ? "∘" : "◦", 0.75 * g, K_HI);
+          const [x, y] = eyeAt(pr * 1.22 + (RI - pr) * 0.36 + 0.02 * Math.sin(i * 2.3), a, open);
+          this.plot(x, y, i % 2 ? "∘" : "◦", 0.8 * g, small ? K_HI : WHEEL[(i + Math.floor(t * 2)) % WHEEL.length]);
         }
-        // pupil: an empty ring around the core
+        // pupil: an empty well around the core
         for (let yy = -pr; yy <= pr; yy += 0.03) for (let xx = -pr; xx <= pr; xx += 0.03) {
-          if (xx * xx + yy * yy < (pr * 0.9) ** 2) {
-            const a = Math.atan2(yy, xx), r = Math.hypot(xx, yy);
-            const [x, y] = eyeAt(r, a, open);
+          if (xx * xx + yy * yy < (pr * 0.92) ** 2) {
+            const [x, y] = eyeAt(Math.hypot(xx, yy), Math.atan2(yy, xx), open);
             this.plot(x, y, " ", 1.15, K_DIM);
           }
         }
-        ring(pr, null, 0.95 * g, K_HI, 1.4);
-        // the core: a diamond with a small orbit of sparks inside the pupil
-        const sparks = 6;
-        for (let i = 0; i < sparks; i++) {
-          const a = i / sparks * Math.PI * 2 + t * (st === "thinking" ? 3.2 : 1.1);
-          const [x, y] = eyeAt(pr * 0.55, a, open);
-          this.plot(x, y, i % 2 ? "·" : "•", 1.2, K_STATE);
+        ring(pr, null, 1.0 * g, K_HI, 1.6);
+        ring(pr * 1.1, "·", 0.75 * g, K_ORA, 1.2);
+        // the moving centre: two counter-rotating orbits of sparks cycling through the
+        // gruvbox palette, a dotted inner ring, and the ◈ core shifting hue
+        const spin = st === "thinking" ? 3.2 : st === "speaking" ? 1.8 + this.outS * 3 : 1.1;
+        const outerN = small ? 6 : 12, innerN = small ? 0 : 8;
+        for (let i = 0; i < outerN; i++) {
+          const a = i / outerN * Math.PI * 2 + t * spin;
+          const [x, y] = eyeAt(pr * 0.66, a, open);
+          this.plot(x, y, i % 3 === 0 ? "◆" : i % 2 ? "•" : "∙", 1.2, WHEEL[(i + Math.floor(t * 3)) % WHEEL.length]);
         }
-        this.plot(ex, ey, "◈", 1.3, K_HI);
+        for (let i = 0; i < innerN; i++) {
+          const a = i / innerN * Math.PI * 2 - t * spin * 1.4;
+          const [x, y] = eyeAt(pr * 0.38, a, open);
+          this.plot(x, y, i % 2 ? "·" : "•", 1.2, WHEEL[(i * 2 + Math.floor(t * 4)) % WHEEL.length]);
+        }
+        if (!small) for (let i = 0; i < 4; i++) {                 // crosshair arms around the core
+          const a = i * Math.PI / 2 + t * 0.6, [x, y] = eyeAt(pr * 0.2, a, open);
+          this.plot(x, y, i % 2 ? "│" : "─", 1.0, K_FG2);
+        }
+        this.plot(ex, ey, "◈", 1.35, WHEEL[Math.floor(t * 1.5) % WHEEL.length]);
         // glint: a fixed highlight up and to the left, like light on a lens
         this.plot(ex - irisR * 0.42, ey - irisR * 0.48, "✦", 1.0 * g, K_HI);
         this.plot(ex - irisR * 0.3, ey - irisR * 0.62, "·", 0.8 * g, K_HI);
+        this.plot(ex - irisR * 0.52, ey - irisR * 0.36, "·", 0.6 * g, K_HI);
       }
 
       // voice waveform ring
@@ -544,7 +581,7 @@
         this.plot(cx + Math.cos(a0 + span) * r1, cy + Math.sin(a0 + span) * r1, "◆", 0.95 * g, K_HI);
       }
       // HUD ring 2: ticks
-      const r2 = R * 1.46, n2t = small ? 48 : 96;
+      const r2 = R * 1.46, n2t = small ? 48 : 144;
       for (let i = 0; i < n2t * boot; i++) {
         const a = i / n2t * Math.PI * 2 - this.ring * 0.7, major = i % 6 === 0;
         this.plot(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2, major ? "+" : "·", (major ? 0.5 : 0.24) * g, major ? K_STATE : K_DIM);
@@ -586,20 +623,24 @@
       }
 
       this.title = null;
+      if (!small && this.debug) this.text(this.cw, H - this.ch, `${(this.frameCost || 0).toFixed(1)}ms q${this.detail.toFixed(2)}`, 0.5, K_DIM);
       if (!small) {
-        // labels and read-outs live at the edges, well away from the eye
-        this.title = { y: this.ch * 1.2 };
+        // labels and read-outs sit just around the core: title above, state below, meters at
+        // the sides, read-outs inside the four corner brackets of the HUD square
+        const r4 = R * 1.62;
+        this.title = { y: Math.max(this.ch * 1.1, cy - r4 - this.ch * 0.4) };
         const label = this.scrambled(LABELS[st] || st.toUpperCase(), this.stateT);
-        // state label above the caption line (the page shows live captions at the very bottom)
-        this.text(cx - label.length * this.cw / 2, H - this.ch * 4.4, label, 0.85 * Math.max(g, 0.6), K_STATE, true);
-        if (this.sub) this.text(cx - this.sub.length * this.cw / 2, H - this.ch * 3.3, this.sub, 0.45, K_DIM);
+        const ly = Math.min(cy + r4 - this.ch * 0.2, H - this.ch * 4.4);      // above the caption line
+        this.text(cx - label.length * this.cw / 2, ly, label, 0.85 * Math.max(g, 0.6), K_STATE, true);
+        if (this.sub) this.text(cx - this.sub.length * this.cw / 2, ly + this.ch * 1.1, this.sub, 0.45, K_DIM);
         const meter = (x) => "▮".repeat(Math.round(clamp(x, 0, 1) * 8)).padEnd(8, "▯");
         const left = `MIC ${meter(this.micS)}`, right = `OUT ${meter(this.outS)}`;
-        this.text(this.cw * 2, cy - this.ch / 2, left, 0.5, this.micS > 0.05 ? K_STATE : K_DIM);
-        this.text(W - (right.length + 2) * this.cw, cy - this.ch / 2, right, 0.5, this.outS > 0.05 ? K_STATE : K_DIM);
-        const x0 = this.cw * 2, x1 = W - this.cw * 2, y0 = this.ch * 1.2, y1 = H - this.ch * 1.6;
-        [[x0 - this.cw, y0 - this.ch * 0.6, "┌"], [x1, y0 - this.ch * 0.6, "┐"], [x0 - this.cw, y1 + this.ch * 0.4, "└"], [x1, y1 + this.ch * 0.4, "┘"]]
-          .forEach(([x, y, c]) => this.plot(x, y, c, 0.45, K_DIM));
+        this.text(Math.max(this.cw, cx - r4 - (left.length + 1) * this.cw), cy - this.ch / 2, left, 0.5, this.micS > 0.05 ? K_STATE : K_DIM);
+        this.text(Math.min(W - (right.length + 1) * this.cw, cx + r4 + this.cw), cy - this.ch / 2, right, 0.5, this.outS > 0.05 ? K_STATE : K_DIM);
+        const bx = Math.min(r4 + this.cw * 6, W / 2 - this.cw * 2), by = Math.min(r4 * 0.92, H / 2 - this.ch * 1.4);
+        const x0 = cx - bx + this.cw * 1.5, x1 = cx + bx - this.cw * 0.5, y0 = cy - by - this.ch * 0.4, y1 = cy + by;
+        [[-1, -1, "┌"], [1, -1, "┐"], [-1, 1, "└"], [1, 1, "┘"]]
+          .forEach(([sx, sy, c]) => this.plot(cx + sx * bx, cy + sy * by, c, 0.45, K_DIM));
         const act = this.nodes.reduce((a, m) => a + m.act, 0) / this.nodes.length;
         const put = (arr, x, y, right, down) => arr.filter(Boolean).forEach((s, i) => {
           this.text(right ? x - s.length * this.cw : x, y + (down ? i : -i) * this.ch, s, i === 0 ? 0.45 : 0.32, i === 0 ? K_STATE : K_DIM);
@@ -640,8 +681,8 @@
     rgb(key) {
       if (key === K_STATE) return this.col[1];
       if (key === K_ACC) return this.col[4];
-      return RGB[{ [K_DIM]: "gray", [K_HI]: "fg", [K_NET]: this.state === "asleep" ? "bg3" : "blue",
-                   [K_HOT]: "red", [K_PURPLE]: "purple" }[key]];
+      if (key === K_NET) return RGB[this.state === "asleep" ? "bg3" : "blue"];
+      return RGB[FIXED[key] || "gray"];
     }
     color(key, lvl) {
       const c = this.rgb(key);
