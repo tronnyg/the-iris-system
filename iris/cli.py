@@ -600,6 +600,41 @@ def cmd_agent(a) -> None:
         print(f"created agent '{a.name}' at {paths.agent_dir()}\nuse it with: iris --agent {a.name} talk")
 
 
+def cmd_branch(a) -> None:
+    """Branch workflow (docs/BRANCHING.md): status | start NAME | finish --yes | sync [NAME] | unblock NAME."""
+    from . import branches
+    repo = paths.REPO
+    try:
+        if a.action == "start":
+            print("on new branch " + branches.start(repo, a.name or ""))
+        elif a.action == "finish":
+            print(f"merged {branches.finish(repo, approved=a.yes)} into main, pushed, deleted")
+        elif a.action == "sync":
+            res = branches.sync(repo, a.name)
+            for n, r in res.items():
+                print(f"  {n}: {r}")
+            if not res:
+                print("no variants to sync (docs/variants.yaml)")
+        elif a.action == "unblock":
+            branches.unblock(a.name or "")
+            print(f"{a.name}: unblocked; run `iris branch sync {a.name}`")
+        else:
+            s = branches.status(repo)
+            print(f"on {s['on']}")
+            print("improvement branch: " + (", ".join(s["improvements"]) or "none (main is free to branch from)"))
+            for v in s["variants"]:
+                flag = "RETIRED" if v["retired"] else "BLOCKED" if v["blocked"] else "ok"
+                behind = "missing" if not v["exists"] else f"{v['behind_main']} behind main"
+                print(f"  variant/{v['name']:<18} {v['mode']:<6} {behind:<16} {flag}  {v['purpose']}")
+            if s["unregistered"]:
+                print("unregistered variants (add to docs/variants.yaml): " + ", ".join(s["unregistered"]))
+            if s["stale"]:
+                print("merged but not deleted: " + ", ".join(s["stale"]))
+    except branches.BranchError as e:
+        print("refused: " + str(e))
+        sys.exit(1)
+
+
 def cmd_init(a) -> None:
     paths.ensure_dirs()
     created = selfstore.init()
@@ -704,6 +739,10 @@ def main(argv=None) -> None:
     p.add_argument("-n", type=int, default=30)
     add("rate", cmd_rate, "blind A/B listening test between voices")
 
+    p = add("branch", cmd_branch, "branch workflow: status | start NAME | finish --yes | sync [NAME] | unblock NAME")
+    p.add_argument("action", nargs="?", default="status", choices=["status", "start", "finish", "sync", "unblock"])
+    p.add_argument("name", nargs="?", help="start: fix|feat|docs|chore/<topic>; sync/unblock: variant name")
+    p.add_argument("--yes", action="store_true", help="finish: the user approved the merge")
     add("status", cmd_status, "what's configured and pending")
     p = add("doctor", cmd_doctor, "check the installation (Ollama, GPU, models, audio)")
     p.add_argument("--full", action="store_true", help="also load every model once")

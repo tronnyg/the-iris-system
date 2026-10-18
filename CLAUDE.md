@@ -25,7 +25,10 @@ the data IRIS collected:
 
 - Tests: `.venvs/core/bin/python -m pytest -q` (hermetic: fake Ollama, temp IRIS_HOME, no
   network, no real models). Run them before and after changes; add tests for new behaviour.
-- Work on a branch; commit in logical steps. Don't merge to `main` unless asked.
+- Branches: **one improvement branch at a time, always cut from `main`, never from another branch**. Commit in
+  logical steps; don't merge to `main` unless the user says so, then merge (`--no-ff`), push and delete the branch
+  (local + remote) before starting the next. `variant/<name>` branches (registered in `docs/variants.yaml`) are the
+  only exception. Use `iris branch status|start|finish|sync`. Full rules: `docs/BRANCHING.md`.
 - Match the surrounding code: small modules, docstrings that explain *why*, standard library
   over new dependencies (core venv: `.venvs/core`, install with `uv pip install --python .venvs/core/bin/python`).
 - Locked for the loops (and for you unless the user asks): the agent's `policy.yaml`,
@@ -55,6 +58,7 @@ the data IRIS collected:
 | `iris/voicefx.py` | live voice commands (long dictated requests, magnitudes) and rendering (chunk trimming, gaps, per-sentence variety) |
 | `iris/improve/night.py` | night/idle stages; `bench.py`, `insights.py` (findings + dossier), `sleep.py` (reflection) |
 | `iris/jobs.py` | background job control and systemd timers |
+| `iris/branches.py` | branch workflow (one improvement branch from main; variants kept current with main) |
 | `iris/lists.py` | user lists and the voice phrases for them |
 | `iris/ollama_ctl.py` | IRIS's private Ollama instance and its config |
 | `iris/metrics.py`, `iris/trace.py` | what is measured per turn and how it's aggregated |

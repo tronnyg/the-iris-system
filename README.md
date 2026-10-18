@@ -168,7 +168,7 @@ so the split is:
   settings), capability gaps, and the local model's own ideas (marked as hints).
 - **You decide when to improve:** open Claude Code in this repo and run `/improve`. It runs
   `iris dossier` (everything above as markdown in `.iris/dossier/`), reads `docs/ROADMAP.md`,
-  picks the most valuable items (your lists first), implements them on a branch with tests, and
+  picks the most valuable items (your lists first), implements them on a branch (rules: [docs/BRANCHING.md](docs/BRANCHING.md)) with tests, and
   marks them done (`iris list done <id> --note <commit>`, `iris findings done <id>`). That covers
   code, prompts, tools, models (`iris set model llm ...`) and IRIS's Ollama settings
   (`iris ollama set OLLAMA_FLASH_ATTENTION 1`): all of it, from your data.
