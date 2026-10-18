@@ -15,6 +15,10 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
   is 4.3 GB in a session with its vision/audio projectors, not the benchmark's 3 GB), and GPU recognisers are
   budgeted with their encoder working memory (turbo 2 GB).
 
+### Added
+- `scripts/strip_mmproj_audio.py`: a vision-only copy of a multimodal Ollama model (gemma4 e4b: audio encoder 591 MiB
+  removed, vision 354 MiB kept), created as `gemma4:e4b-it-qat-vision` (ADR-0030).
+
 ### Changed
 - The live agent's recogniser is back to `moonshine/base` (large-v3-turbo on the GPU doesn't fit beside gemma4 and
   Kokoro on 8 GB; ADR-0029).

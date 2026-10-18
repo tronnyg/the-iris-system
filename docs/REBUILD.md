@@ -57,6 +57,10 @@ cd ~/the-iris-system
 
 `large-v3-turbo@gpu` needs no extra install: it borrows CUDA 12 cuBLAS/cuDNN from `.venvs/kokoro`.
 
+If the LLM is multimodal, consider a copy without the parts IRIS doesn't use (it hears through its own
+recogniser): `uv run --no-project --with gguf python scripts/strip_mmproj_audio.py gemma4:e4b-it-qat
+gemma4:e4b-it-qat-vision` keeps vision and frees ~0.6 GB of GPU memory ([ADR-0030](adr/0030-vision-only-llm-copy.md)).
+
 ### Restore an agent and verify
 
 ```bash

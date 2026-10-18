@@ -70,6 +70,9 @@ pointing at a closed port, `IRIS_OLLAMA=external`, no systemd, no notifications,
 
 Rule: every behaviour fix gets a test built from the real phrase that failed (`test_session_replay.py`).
 
+Model tooling: `scripts/strip_mmproj_audio.py` (a vision-only copy of a multimodal Ollama model, see
+[03](03-thinking.md#multimodal-models-drop-what-iris-doesnt-use)).
+
 Diagrams are checked outside the suite (they need Node and a browser): `python scripts/check_diagrams.py`
 renders every Mermaid block in the docs and fails on any that GitHub couldn't draw.
 
