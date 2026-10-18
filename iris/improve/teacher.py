@@ -83,6 +83,8 @@ def grade_stt(turns: list[dict], teacher_model: str, candidates: list[str], max_
         if w > 0.25:
             spot.append({"audio": t["audio_in"], "heard": t.get("user_text"), "teacher": ref, "wer": round(w, 2)})
     result["spot_checks"] = sorted(spot, key=lambda x: -x["wer"])[:8]
+    result["pairs"] = [{"audio": t["audio_in"], "heard": t.get("user_text") or "", "teacher": refs.get(t["audio_in"], "")}
+                       for t in items if refs.get(t["audio_in"], "").strip()]
     return result
 
 

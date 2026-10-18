@@ -31,7 +31,7 @@ Every line has `schema`, `type`, `session`, `ts`.
 | `session_end` | `Session.shutdown` | `turns` |
 | `feedback` | ratings (voice, `+ = -`, hotkey, UI) | `turn`, `value` (good, ok, bad), `source`, `note` |
 | `tool` | `Session._on_tool` | `name`, `args` |
-| `list` | list commands | `text`, `said` |
+| `list` | list commands | `text`, `said`, `via` (`phrase`, `model`, `asked`, `awaited`) |
 | `pronunciation` | pronunciation commands | `text`, `said` |
 | `voice_feedback` | voice commands | `text`, `changes`, `said` |
 | `garble_ask` / `garble_confirmed` / `garble_rejected` | garble guard | `text`, `logprob` |

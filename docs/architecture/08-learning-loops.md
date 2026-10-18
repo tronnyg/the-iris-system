@@ -11,7 +11,7 @@ flowchart LR
     LIVE["LIVE (while you talk)<br/>trace every turn · remember/forget now ·<br/>voice/list/pronunciation commands"] --> SLEEP
     SLEEP["SLEEP (session ends)<br/>reflection → memory deltas, episode,<br/>regression evals, hidden guesses"] --> IDLE
     IDLE["IDLE (every 30 min, after 10 quiet min, 15 min budget)<br/>sleep · metrics · judge · findings · bench"] --> NIGHT
-    NIGHT["NIGHT (03:00 or iris night, 4 h budget)<br/>all 16 stages"] --> HAND
+    NIGHT["NIGHT (03:00 or iris night, 4 h budget)<br/>all 17 stages"] --> HAND
     HAND["HANDOFF (when you choose)<br/>iris dossier → /improve in Claude Code<br/>→ code on a branch, you merge"]
     HAND -.-> LIVE
 ```
@@ -36,7 +36,8 @@ flowchart TD
     VO --> SC[scout<br/>packages, Ollama, trending models, local LLM benchmarks]
     SC --> BE[bench<br/>latency, tool choice, Ollama server settings]
     BE --> FI[findings<br/>metrics vs targets, regressions, errors, slow stages]
-    FI --> SU[suggest<br/>the judge's own ideas as low-confidence hints]
+    FI --> MI[mine<br/>recurring mishearings, list phrasings, failed turns → proposals only]
+    MI --> SU[suggest<br/>the judge's own ideas as low-confidence hints]
     SU --> RE[report<br/>morning report, desktop notification]
 ```
 
@@ -238,3 +239,31 @@ flowchart LR
   voice settings; "The word Cuban is pronounced wrong" would have taught "Cuban" the pronunciation "wrong". Both fixed.
 * **Adding a case:** when something goes wrong in a real session, add the phrase with what should have happened
   (redact names), run `iris replay`, see it fail, fix the code, see it pass.
+
+## 12. Rule mining
+
+Source: `iris/improve/mine.py` (night stage `mine`, after `findings`), `iris replay candidates`. Decision:
+[ADR-0033](../adr/0033-rule-mining-proposes-never-applies.md).
+
+The night loop reads your own data for things that recur, and **writes proposals, never changes**:
+
+```mermaid
+flowchart TD
+    STT["stt stage: teacher Whisper grades the day's audio"] -->|"(heard, teacher) pair per clip, kept in state/stt_pairs.jsonl"| M1
+    M1["mishearings: the same word/phrase heard wrongly in ≥ 3 different clips,<br/>right elsewhere ≤ 20 % of the time, not already fixed by asr_fix"] --> F1["finding: proposed stt.corrections entry<br/>(heard → teacher, example, ready-to-paste YAML)"]
+    EV["trace events: list with via = model | asked"] --> M2["list phrasings the phrase matcher couldn't parse"] --> F2["finding: add phrase patterns"]
+    TR["turns followed by 'what?', 'no, I meant', a repeat;<br/>false claims; rated bad"] --> M3["failed turns"] --> C["state/replay_candidates.jsonl<br/>→ iris replay candidates · dossier: replay-candidates.md"]
+    F1 --> D["iris findings · iris dossier"]
+    F2 --> D
+    C --> L["a person (or Claude Code) gives each its expected route<br/>and adds it to evals/replay/, then fixes the code"]
+```
+
+* **Pairs come for free** from the STT grading stage (which already decodes every clip with the big model); only the worst
+  8 used to be kept, now every pair is (newest 2000, one per recording).
+* **Why ≥ 3 clips and "right elsewhere":** a replacement rewrites every occurrence; seen on your 202 real clips,
+  recurring mishearings are rare (none reached 3 clips; the nearest was 2 and is noise) so the stage mostly says "nothing yet"
+  until months of data accumulate. A heard phrase that the big model *agrees with* in more than 20 % of its uses is never proposed.
+* **How list requests were understood** is now on the `list` trace event (`via`: `phrase` matcher, `model` extracted the item,
+  `asked` it had to ask, `awaited` the answer to its question); `model`/`asked` ones are the phrasings to add.
+* **Closing the loop:** `iris replay candidates` lists the turns that went wrong; label one, add it to `evals/replay/`
+  ([11](#11-the-replay-benchmark)), then `iris replay candidates done <id>` (or `drop <id>`).

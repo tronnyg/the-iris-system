@@ -45,6 +45,8 @@ flowchart TB
 | `state/bench.jsonl` | `{ts, kind (llm, tools, leak, ollama), …}` | `improve/bench.py`, web MODELS | no |
 | `state/model_traits.json` | `{model: {leaks, checked}}` | `pipeline.py` | no |
 | `state/vram.json` | `{engine: MB, "llm:model": MB}` learned sizes | `vram.py` | no |
+| `state/stt_pairs.jsonl` | `{audio, heard, teacher, ts}`: what was heard vs the big model's reading, newest 2000 | `improve/mine.py` | no |
+| `state/replay_candidates.jsonl` | turns that went wrong, waiting to become replay cases `{id, said, why, route, reply, session, turn, status}` | `improve/mine.py` | no |
 | `state/ratings.jsonl` | `iris rate` votes `{ts, pair, winner, clip}` | `improve/review.py` | no |
 | `state/night.json` / `idle.json` | `{last_run_ts, last_finished, metrics}` | `improve/night.py` | no |
 | `state/sleep.json` | `{reflected: [session ids]}` | `improve/sleep.py` | no |

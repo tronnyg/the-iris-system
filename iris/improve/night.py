@@ -20,6 +20,8 @@ Stages (each isolated: one failing never stops the rest; see `iris night --only 
     scout        new package versions, runtime updates, trending models, local LLM benchmarks
     bench        latency / tool-choice benchmarks, Ollama server-setting comparisons
     findings     metrics past their targets, regressions, errors, slow stages -> findings
+    mine         rules from your data: recurring mishearings, list phrasings the matcher missed, failed turns ->
+                 findings and replay-case candidates (proposals only; nothing is applied)
     suggest      the local judge model's own improvement ideas (low-confidence findings)
     report       the morning report
 
@@ -46,12 +48,12 @@ from ..metrics import compute
 from ..stt import STT
 from ..tts.client import engine_load_options, make_tts, synth_opts
 from ..util import log, mean, read_json, read_jsonl, setup_logging, write_json
-from . import bench, gate, insights, promptopt, report as report_mod, scout, sleep, teacher, tuner
+from . import bench, gate, insights, mine, promptopt, report as report_mod, scout, sleep, teacher, tuner
 from .judge import Judge
 
 NEEDS_LLM = {"sleep", "judge", "evals", "prompt", "bench", "suggest"}
 STAGES = ["cleanup", "sleep", "metrics", "stt", "tts", "judge", "experiments", "tune",
-          "evals", "prompt", "voice", "scout", "bench", "findings", "suggest", "report"]
+          "evals", "prompt", "voice", "scout", "bench", "findings", "mine", "suggest", "report"]
 IDLE_STAGES = ["sleep", "metrics", "judge", "findings", "bench"]
 
 
@@ -199,6 +201,7 @@ class Night:
         res = teacher.grade_stt(self.turns(), self.settings.pol("night.teacher_stt", "large-v3-turbo"), choices)
         if res.get("stt_wer") is not None:
             self.metrics["stt_wer"] = res["stt_wer"]
+        res["new_pairs"] = mine.save_pairs(res.pop("pairs", []))        # (heard, teacher) pairs for the mine stage
         return res
 
     def s_tts(self) -> dict:
@@ -453,6 +456,9 @@ class Night:
             add("tools", "bottleneck", f"{len(slow)} tool calls took over 4s",
                 [f"{x.get('name')} {x.get('secs')}s" for x in slow[:5]])
         return {"findings": sorted(set(new))}
+
+    def s_mine(self) -> dict:
+        return mine.run(self.settings)
 
     def s_suggest(self) -> dict:
         """The local judge's own ideas: kept as hints (a small model diagnoses poorly)."""

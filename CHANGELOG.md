@@ -9,6 +9,13 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
 ## [Unreleased]
 
 ### Added
+- Rule mining (night stage `mine`, ADR-0033): recurring mishearings (≥ 3 clips, not right elsewhere, not already fixed) become
+  proposed `stt.corrections`; list requests the phrase matcher couldn't parse and turns that went wrong (corrected, repeated,
+  false claim, rated bad) become findings and replay-case candidates (`iris replay candidates`, dossier
+  `replay-candidates.md`). Proposals only: nothing is applied. The STT grading stage now keeps every (heard, teacher) pair.
+- The `list` trace event says how the request was understood (`via`).
+
+### Added
 - The replay benchmark (`iris replay`, `iris/replay.py`, ADR-0032): 177 real or redacted utterances and what must happen
   (141 train cases in `evals/replay/`, 36 held out in `$IRIS_HOME/replay/holdout/`); offline mode is part of the test suite,
   `--live` checks the real model. Every answer now carries a `route` (recorded on turn records; metrics `route_counts`,
