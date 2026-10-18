@@ -202,6 +202,7 @@ Built {dt.datetime.now().isoformat(timespec='minutes')} from agent `{paths.agent
 | bench.md | latency / throughput / tool-calling benchmarks and Ollama config comparisons |
 | evals.md | failing eval cases |
 | conversations.md | recent turns with timings, ratings, interruptions |
+| replay-candidates.md | turns that went wrong, waiting to become replay-benchmark cases (label, add to `evals/replay/`) |
 | done.md | already implemented (don't redo) |
 
 Close items when implemented:
@@ -281,6 +282,18 @@ Close items when implemented:
     md = ["# Recent conversations", "", f"{len(real)} turns (last {days} days). Ratings: good / ok / bad.", ""]
     md += [fmt_turn(t) + "\n" for t in real]
     (out / "conversations.md").write_text("\n".join(md))
+
+    # replay candidates (turns that went wrong; the mine stage collects them)
+    from . import mine
+    cands = mine.candidates()
+    md = ["# Replay-benchmark candidates", "",
+          "Turns that went wrong (you corrected IRIS, repeated yourself, it claimed something it didn't do, you rated it bad).",
+          "For each: decide what SHOULD have happened (`route`: list, voice, pronounce, rating, fastpath:X, lookup:X, search,",
+          "model, ...), redact names, add it to `evals/replay/*.yaml` (see docs/architecture/08 section 11), fix the code, and",
+          "close it with `iris replay candidates done <id>` (or `drop <id>`).", ""]
+    md += [f"- `{c['id']}` [{c.get('route') or '?'}] {c['said'][:140]!r}: {c['why']}; reply: {c.get('reply', '')[:100]!r}"
+           for c in cands[:60]] or ["- (none)"]
+    (out / "replay-candidates.md").write_text("\n".join(md) + "\n")
 
     # done
     closed_l = [r for r in lists.items(statuses=("done", "dropped"))]

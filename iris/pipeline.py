@@ -274,16 +274,21 @@ class Conversation:
         # lists come first: "add to improvements list that the voice is too high" is a list item,
         # not a pitch command (it used to be swallowed by the voice parser)
         self.cmd_route = None
-        said = self._awaited_list_item(text) or lists.command(
-            text, session=self.writer.session, turn=self.turn_no or None,
-            resolver=lambda: lists.resolve_item(self.llm, self.history, options=llm_options(self.s, self.llm.model)))
+        via = "awaited"
+        said = self._awaited_list_item(text)
+        if not said:
+            via = "phrase"
+            said = lists.command(
+                text, session=self.writer.session, turn=self.turn_no or None,
+                resolver=lambda: lists.resolve_item(self.llm, self.history, options=llm_options(self.s, self.llm.model)))
         if not said:
             wanted = actions.detect_list_intent(text)
             if wanted:                   # an order the phrase matcher couldn't cut apart: ask the model, never drop it
                 said = self._list_by_model(text, wanted)
+                via = "asked" if said.startswith("What should I add") else "model"
         if said:                        # "add X to my feature list" (before "remember ...")
             self.cmd_route = "list"
-            self.writer.event("list", text=text, said=said)
+            self.writer.event("list", text=text, said=said, via=via)
             return said
         said = self._pronunciation_command(text)
         if said:

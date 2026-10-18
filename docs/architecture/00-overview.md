@@ -237,6 +237,7 @@ Kept complete by `tests/test_docs.py`: a new module without a row here fails the
 | `iris/improve/promptopt.py` | reflective prompt-edit candidates | [08](08-learning-loops.md) |
 | `iris/improve/bench.py` | LLM / tool-choice / Ollama-setting benchmarks | [08](08-learning-loops.md) |
 | `iris/improve/scout.py` | new packages, runtimes, models (never downloads) | [08](08-learning-loops.md) |
+| `iris/improve/mine.py` | rule mining: recurring mishearings, list phrasings the matcher missed, failed turns → findings and replay candidates (proposals only) | [08](08-learning-loops.md#12-rule-mining) |
 | `iris/improve/insights.py` | findings and the dossier for Claude Code | [08](08-learning-loops.md) |
 | `iris/improve/report.py` | the morning report | [08](08-learning-loops.md) |
 | `iris/improve/review.py` | proposals review/approve/reject, rollback, `iris rate` | [08](08-learning-loops.md) |

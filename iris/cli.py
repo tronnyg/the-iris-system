@@ -546,8 +546,23 @@ def cmd_evals(a) -> None:
 
 
 def cmd_replay(a) -> None:
-    """iris replay [--split train|holdout|all] [--live] [--only ID] [--json] | split SRC: real utterances and what must happen."""
+    """iris replay [--split train|holdout|all] [--live] [--only ID] [--json] | split SRC | candidates [done|drop ID]."""
     from . import replay
+    if a.args and a.args[0] == "candidates":
+        from .improve import mine
+        selfstore.init()
+        rest = a.args[1:]
+        if rest[:1] and rest[0] in ("done", "drop"):
+            for cid in rest[1:]:
+                r = mine.set_candidate(cid, "done" if rest[0] == "done" else "dropped")
+                print(f"{rest[0]}: {cid} {r['said'][:60]!r}" if r else f"no candidate {cid}")
+            return
+        rows = mine.candidates(None if a.all else ("new",))
+        for r in rows:
+            print(f"{r['id']}  [{r.get('route') or '?'}] {r['said'][:90]!r}\n      {r['why']}; reply: {r.get('reply', '')[:80]!r}")
+        print(f"\n{len(rows)} candidate(s). Give one its expected route, add it to evals/replay/ (docs/architecture/08 §11), "
+              "then: iris replay candidates done <id> | drop <id>" if rows else "no candidates")
+        return
     if a.args and a.args[0] == "split":
         if len(a.args) != 2:
             sys.exit("usage: iris replay split <cases.yaml | folder>")
@@ -816,11 +831,12 @@ def main(argv=None) -> None:
     p.add_argument("--judge", action="store_true")
     p.add_argument("--golden", action="store_true", help="golden cases only")
     p.add_argument("--model")
-    p = add("replay", cmd_replay, "replay real utterances against the routing and commands (the benchmark): iris replay split SRC")
-    p.add_argument("args", nargs="*", help="split SRC")
+    p = add("replay", cmd_replay, "replay real utterances against the routing and commands (the benchmark): split SRC | candidates")
+    p.add_argument("args", nargs="*", help="split SRC | candidates [done|drop ID]")
     p.add_argument("--split", default="train", choices=["train", "holdout", "all"])
     p.add_argument("--live", action="store_true", help="real model and tools on a scratch copy of your agent (GPU)")
     p.add_argument("--only", help="only cases whose id contains this")
+    p.add_argument("--all", action="store_true", help="with candidates: include done and dropped")
     p.add_argument("--json", action="store_true")
     p.add_argument("-V", "--verbose", action="store_true", help="list passing cases too")
     p = add("set", cmd_set, "change a knob or model yourself")
