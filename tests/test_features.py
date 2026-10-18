@@ -55,7 +55,7 @@ def test_native_tool_calls_and_spoken_filler(monkeypatch):
     seen = []
     c = conv(NativeLLM())
     c.on_tool = lambda name, args: seen.append((name, args))
-    r = c.respond("what's the weather in cape town", speak=False)
+    r = c.respond("is it going to be sunny in cape town tomorrow", speak=False)
     assert r.spoken.startswith("Let me look that up.") and "sunny" in r.spoken
     assert seen == [("web_search", {"query": "Cape Town weather"})]
 
@@ -162,3 +162,69 @@ def test_old_pod_gets_voice_knobs_added():
     voicefx.ensure_knobs()
     knobs = yaml.safe_load(p.read_text())["knobs"]
     assert all(k in knobs for k in voicefx.KNOBS) and knobs["vad.silence_ms"]["value"] == 700
+
+
+def test_chunk_edges_are_trimmed_and_replaced_by_a_deliberate_gap():
+    """Engines pad each chunk with silence; the trimmed speech gets a short, punctuation-aware gap."""
+    import numpy as np
+    from iris import voicefx
+    from iris.config import Settings
+    from iris.tts.client import SynthResult
+    sr = 24000
+    speech = (0.3 * np.sin(np.arange(sr) / 20.0)).astype(np.float32)             # 1.0 s of "speech"
+    padded = np.concatenate([np.zeros(int(0.3 * sr), np.float32), speech, np.zeros(int(0.54 * sr), np.float32)])
+
+    class Pad:
+        def synth(self, text, speed=1.0, opts=None):
+            return SynthResult(audio=padded.copy(), sr=sr, gen_s=0.1, audio_s=len(padded) / sr)
+
+    s = Settings.load()
+    s.overrides["tts.expressiveness"] = 0.5                                      # gap factor 1.0
+    sentence = voicefx.synth(Pad(), "That is it.", s)
+    clause = voicefx.synth(Pad(), "Well, that is it,", s)
+    phrase = voicefx.synth(Pad(), "that is it and", s)
+    assert 1.2 < sentence.audio_s < 1.4 < 1.5                                    # 1.0 + 20+70 ms + 170 ms gap, not 1.84 s
+    assert sentence.audio_s > clause.audio_s > phrase.audio_s
+    assert abs((sentence.audio_s - phrase.audio_s) - 0.145) < 0.02
+    off = Settings.load()
+    off.pod["prosody"] = {"trim_edges": False}
+    assert abs(voicefx.synth(Pad(), "That is it.", off).audio_s - 1.84) < 0.01   # opt out: unchanged
+    assert voicefx.boundary_kind("Hello there.") == "sentence" and voicefx.boundary_kind("[warm] Well,") == "clause"
+    assert voicefx.boundary_kind("and then we") == "phrase"
+
+
+def test_voice_commands_read_long_dictated_requests_and_magnitudes():
+    from iris import voicefx
+    p = lambda s, last=None: [(c.knob, c.direction, c.steps) for c in voicefx.parse(s, last)]
+    # session 162726-1a54: four requests for more enthusiasm that did nothing
+    assert p("Can you add a little bit more enthusiasm to your voice? Certain words should be said longer so that it sounds more human-like.") == [("tts.expressiveness", 1, 1)]
+    assert p("Make it a little less monotone.") == [("tts.expressiveness", 1, 1)]
+    long = ("Your voice is still seemingly monotone, you need to have more enthusiasm, less monotone, a lot less monotone "
+            "and then also certain words and punctuation and in a sentence are usually set slower than others")
+    assert p(long) == [("tts.expressiveness", 1, 3)]                                   # the strongest clause wins
+    assert p("make your voice way less monotone") == [("tts.expressiveness", 1, 3)]
+    assert p("a lot louder") == [("tts.volume_db", 1, 3)] and p("you're talking too fast") == [("tts.speed", -1, 1)]
+    assert p("Yes, that is correct. Now, implement that but 10 times more.", ("tts.expressiveness", 1)) == [("tts.expressiveness", 1, 4)]
+    assert p("Yes, that is correct. Now, implement that but 10 times more.") == []        # nothing to repeat
+    # stories and questions about other things are left alone
+    assert p("The train was too fast and the movie was too loud when we went last night to the cinema with my family") == []
+    assert p("is it too slow?") == [] and p("what is a monotone?") == []
+
+
+def test_stronger_voice_request_moves_the_knob_further_and_old_bounds_widen(iris_home):
+    import re
+    from iris import voicefx
+    from iris.config import Settings
+    s = Settings.load()
+    pod = s.root / "pods/voice/pod.yaml"
+    old = re.sub(r"(tts\.expressiveness:\s*\{value: )[\d.]+(,\s*min: 0.0,\s*max: )[\d.]+(,\s*step: )[\d.]+",
+                 r"\g<1>1\g<2>1.0\g<3>0.2", pod.read_text())
+    pod.write_text(old)                                            # an agent from before the range was widened
+    s = Settings.load()
+    assert s.knob_spec("tts.expressiveness")["max"] == 1.0 and voicefx.knob(s, "tts.expressiveness") == 1.0
+    assert voicefx.ensure_knobs(s.root) is True
+    s = Settings.load()
+    assert s.knob_spec("tts.expressiveness")["max"] == 2.0 and s.knob_spec("tts.expressiveness")["step"] == 0.25
+    ack = voicefx.apply(s, voicefx.parse("make it a lot less monotone")[0], [])
+    assert ack == "More expression." and voicefx.knob(s, "tts.expressiveness") == 1.75          # 1.0 + 3 steps of 0.25
+    assert voicefx.ensure_knobs(s.root) is False                                              # idempotent

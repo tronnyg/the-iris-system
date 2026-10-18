@@ -155,7 +155,7 @@ def cmd_findings(a) -> None:
         st = {"done": "done", "drop": "dropped", "open": "open"}[args[0]]
         for i in args[1:]:
             r = insights.set_status(int(str(i).lstrip("Ff")), st, a.note)
-            print(f"{st}: F{i} {r['title']}" if r else f"no finding {i}")
+            print(f"{st}: F{r['id']} {r['title']}" if r else f"no finding {i}")
         return
     rows = insights.ranked(insights.findings(None if a.all else ("open",), area=a.area))
     if not rows:
@@ -164,6 +164,62 @@ def cmd_findings(a) -> None:
         tag = " (local model's idea)" if r.get("source") == "local-model" else ""
         print(f"  F{r['id']:<4} [{r['area']}] {r['title']}  x{r.get('count', 1)} · {r.get('source')}{tag}"
               + (f"  [{r['status']}]" if a.all else ""))
+
+
+def cmd_session(a) -> None:
+    """iris session [id]: what happened in a conversation: per-turn timings and flags, and the
+    things that cost you time or trust (cut-offs, false claims, filler openers, slow first sound)."""
+    import re
+    import statistics as st
+    from . import trace
+    selfstore.init()
+    sessions = trace.session_index(days=a.days)
+    if not sessions:
+        sys.exit("no conversations in the traces yet")
+    if a.id:
+        sid = next((s["session"] for s in sessions if s["session"].startswith(a.id)), a.id)
+    else:
+        sid = sessions[0]["session"]
+    turns = [t for t in trace.turns(days=a.days, session=sid)]
+    real = [t for t in turns if t.get("turn") is not None and t.get("cancelled") != "resume"]
+    if not real:
+        sys.exit(f"no turns in session {sid}")
+    print(f"session {sid}: {len(real)} turns   models {(real[0].get('config') or {}).get('models')}\n")
+    fillers = re.compile(r"^\W*(?:\[\w+\]\s*)?(?:okay,?\s+)?(?:yes,?\s+)?(?:i (?:can|will|understand|apologi[sz]e|have|am)|i'(?:ve|m|ll))\b", re.I)
+    firsts, opened, claims, cuts = [], 0, 0, 0
+    for t in real:
+        tm, ep, llm = t.get("timing") or {}, t.get("endpoint") or {}, t.get("llm") or {}
+        fa = tm.get("first_audio")
+        firsts.append(fa) if fa else None
+        flags = [k for k in ("fastpath", "forced") if t.get(k)]
+        from . import actions
+        fc = t.get("false_claim") or actions.false_claims(t.get("reply_spoken") or "", [x.get("name") for x in t.get("tools") or []])
+        if fc:                                       # older sessions: apply the detector now
+            flags.append("FALSE-CLAIM " + "/".join(fc))
+            claims += 1
+        if ep.get("merged_after_resume"):
+            flags.append("cut-off+merged")
+            cuts += 1
+        if t.get("barge_in"):
+            flags.append("interrupted")
+        if t.get("feedback"):
+            flags.append("rated " + t["feedback"])
+        if fillers.match(t.get("reply_spoken") or ""):
+            opened += 1
+        stt = (t.get("stt") or {})
+        first = "  -  " if fa is None else f"{fa:4.2f}"
+        p_end = "" if ep.get("turn_prob") is None else " p=%s" % ep["turn_prob"]
+        print(f"t{t['turn']:<2} first-sound {first}s  stt {stt.get('secs') or 0:4.2f}s ({(stt.get('model') or '?')[:14]})  "
+              f"ttft {llm.get('ttft_s') or 0:4.2f}s  end:{ep.get('reason') or '-'}{p_end}  {' '.join(flags)}")
+        print(f"     you : {(t.get('user_text') or '')[:96]!r}\n     iris: {(t.get('reply_spoken') or '')[:96]!r}")
+    n = len(real)
+    print("\nsummary")
+    if firsts:
+        print(f"  first sound   median {st.median(firsts):.2f}s  worst {max(firsts):.2f}s   (target {_settings().target('first_audio_s', 1.5)}s)")
+    print(f"  cut-offs      {cuts}/{n} turns were your speech ended early and merged")
+    print(f"  false claims  {claims}/{n} replies claimed an action that never happened")
+    print(f"  filler opener {opened}/{n} replies started with 'I can / I will / I understand ...'")
+    print(f"  words/reply   median {st.median(len((t.get('reply_spoken') or '').split()) for t in real):.0f}")
 
 
 def cmd_dossier(a) -> None:
@@ -598,6 +654,9 @@ def main(argv=None) -> None:
     p.add_argument("--area")
     p.add_argument("--note")
     p.add_argument("--all", action="store_true")
+    p = add("session", cmd_session, "what happened in a conversation: timings, cut-offs, false claims (newest by default)")
+    p.add_argument("id", nargs="?", help="session id (or its first characters)")
+    p.add_argument("--days", type=int, default=30)
     p = add("dossier", cmd_dossier, "write the improvement dossier for a Claude Code session (.iris/dossier/)")
     p.add_argument("--out")
     p.add_argument("--days", type=int, default=7)

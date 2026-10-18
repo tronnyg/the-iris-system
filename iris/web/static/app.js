@@ -66,6 +66,16 @@
     return S.cur;
   }
   function closeIris() { if (S.cur) S.cur.done = true; }
+  // a visible "still working" line while a tool runs (the search can take seconds before IRIS speaks)
+  function busy(label) {
+    const el = $("#busy");
+    if (!label) { el.classList.add("hidden"); return; }
+    el.textContent = String(label).replace(/ \.\.\.$/, "") + " …";
+    el.classList.remove("hidden");
+    clearTimeout(busy.t);
+    busy.t = setTimeout(() => el.classList.add("hidden"), 30000);       // never stick
+    $("#mini-state").textContent = String(label).slice(0, 34).toUpperCase();
+  }
   let capT = null;
   function caption(text, you) {
     const c = $("#caption");
@@ -394,11 +404,11 @@
       case "state": setState(e.state, e.mic, e.out); break;
       case "user": addYou(e.text); caption(e.text, true); break;
       case "say": onSay(e.text); break;
-      case "spoken": onSpoken(e.text); core.toolDone(); break;
+      case "spoken": onSpoken(e.text); core.toolDone(); busy(null); break;
       case "delta": S.tokens += 1; core.sub = `${S.tokens} TOKENS`; break;
-      case "turn": onTurn(e); refreshSoon(); if (tabOpen("history") && sessOn === S.info.session) openSession(sessOn); break;
+      case "turn": busy(null); onTurn(e); refreshSoon(); if (tabOpen("history") && sessOn === S.info.session) openSession(sessOn); break;
       case "note": sysline(e.text); break;
-      case "tool": sysline(e.label + " …"); core.tool(e.name, (e.label || "").split(": ").slice(1).join(": ")); break;
+      case "tool": sysline(e.label + " …"); core.tool(e.name, (e.label || "").split(": ").slice(1).join(": ")); busy(e.label); break;
       case "interrupt": if (S.cur) S.cur.el.classList.add("cut"); break;
       case "rated": markRated(e.turn, e.value); break;
       case "ptt": $("#ptt").classList.toggle("rec", !!e.recording); $("#ptt").textContent = e.recording ? "■ STOP" : "◉ TALK"; break;

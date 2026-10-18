@@ -196,3 +196,80 @@ def test_night_picks_the_fastest_equally_accurate_recogniser():
           "moonshine/base": {"wer": 0.06, "secs_p50": 0.1}}
     ch = choose_stt(ev, s)
     assert ch and ch["to"] == "moonshine/base"
+
+
+def test_turns_wait_longer_after_long_speech_and_when_session_adapts():
+    from iris.audio import EnergyVAD, VADConfig
+
+    class Always:
+        def complete_prob(self, audio):
+            return 0.99
+
+    def end_after(speech_s, adapt=0, hold=0):
+        v = EnergyVAD(VADConfig(threshold_db=12, min_speech_ms=200, turn_check_ms=240, turn_max_ms=3000,
+                                long_speech_ms=5000, long_speech_extra_ms=200, hold_ms=hold))
+        v.turn, v.adapt_ms = Always(), adapt
+        events = []
+        for f in frames(np.concatenate([noise(0.5), tone(speech_s), noise(2.0)])):
+            events += v.process(f)
+        ends = [e for e in events if e[0] == "end"]
+        assert len(ends) == 1 and ends[0][1]["reason"] == "smart_turn"
+        return ends[0][1]["trailing_silence_ms"], ends[0][1]["extra_ms"]
+
+    short = end_after(2.0)
+    assert short == (240, 0)
+    long_ms, long_extra = end_after(6.0)
+    assert long_extra == 200 and long_ms >= 440                      # dictated paragraphs get a longer grace
+    adapted_ms, adapted_extra = end_after(2.0, adapt=400)
+    assert adapted_extra == 400 and adapted_ms >= 640
+    assert end_after(2.0, hold=300)[1] == 300                        # the tuned baseline knob
+
+
+def test_recorder_logs_every_end_of_turn_decision_in_a_merged_utterance():
+    from iris.audio import Recorder, VADConfig
+    got = []
+    r = Recorder(got.append, mode="vad", vad=VADConfig(engine="energy", smart_turn=False, silence_ms=300))
+    r.allow_merge = True
+    for f in frames(np.concatenate([noise(0.5), tone(1.0), noise(0.5)])):
+        r.feed(f)
+    r._carry = True                                                  # the session saw it was cut off
+    for f in frames(np.concatenate([tone(1.0), noise(0.8)])):
+        r.feed(f)
+    assert len(got) == 2 and got[1].merged_after_resume
+    assert len(got[0].segments) == 1 and len(got[1].segments) == 2 and got[1].segments[0]["reason"] == "silence"
+
+
+def test_new_template_knobs_reach_existing_agents(iris_home):
+    from iris.config import Settings, sync_knobs
+    s = Settings.load()
+    pod = s.root / "pods/voice/pod.yaml"
+    pod.write_text("\n".join(l for l in pod.read_text().splitlines() if "vad.turn_hold_ms" not in l) + "\n")
+    assert "vad.turn_hold_ms" not in Settings.load().pod["knobs"]
+    assert sync_knobs(s.root) == ["vad.turn_hold_ms"]
+    assert Settings.load().pod["knobs"]["vad.turn_hold_ms"]["tier"] == "auto" and sync_knobs(s.root) == []
+
+
+def test_long_speech_goes_to_whisper_even_with_moonshine(monkeypatch):
+    from iris import stt as stt_mod
+    from iris.stt import Transcript
+    calls = []
+
+    class FakeMoon:
+        def generate(self, audio):
+            calls.append("moonshine")
+            return [[1]]
+
+    class FakeTok:
+        def decode_batch(self, toks):
+            return ["moon text"]
+
+    class FakeWhisper:
+        def transcribe(self, audio, **kw):
+            calls.append("whisper")
+            return Transcript(text="whisper text", model="base.en", secs=0.0, audio_s=len(audio) / 16000)
+
+    s = stt_mod.STT("moonshine/base")
+    monkeypatch.setitem(stt_mod.STT._models, ("moonshine/base", "cpu"), (FakeMoon(), FakeTok()))
+    monkeypatch.setitem(stt_mod.STT._fallbacks, ("long", False), FakeWhisper())
+    assert s.transcribe(tone(3.0)).text == "moon text"
+    assert s.transcribe(tone(14.0)).text == "whisper text" and calls == ["moonshine", "whisper"]

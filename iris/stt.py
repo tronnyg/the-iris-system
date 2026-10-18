@@ -52,6 +52,7 @@ class Transcript:
 
 class STT:
     _models: dict[tuple[str, str], object] = {}
+    _fallbacks: dict = {}
     _lock = threading.Lock()
 
     def __init__(self, model: str = "base.en", device: str = "cpu", compute_type: str = "int8",
@@ -62,9 +63,17 @@ class STT:
         self.compute_type = compute_type
         self.threads = threads or max(1, (os.cpu_count() or 4) // 2)
 
+    long_s = 12.0                  # Moonshine -> Whisper above this much speech
+
     @property
     def moonshine(self) -> bool:
         return self.name.startswith("moonshine/")
+
+    def _whisper(self) -> "STT":
+        key = ("long", self.local_only)
+        if key not in STT._fallbacks:
+            STT._fallbacks[key] = STT("base.en", local_only=self.local_only)
+        return STT._fallbacks[key]
 
     def _model(self):
         key = (self.name, self.device)
@@ -94,6 +103,10 @@ class STT:
         t0 = time.perf_counter()
         if trim:
             audio = trim_silence(audio)
+        if self.moonshine and len(audio) / SAMPLE_RATE > self.long_s:
+            # Moonshine's cost grows with the audio (faster up to ~10 s here, slower at 19 s) and it
+            # drifts on very long speech; Whisper's is flat: long dictation goes to Whisper
+            return self._whisper().transcribe(audio, beam_size=beam_size, prompt=prompt, hotwords=hotwords, trim=False)
         if self.moonshine:
             model, tok = self._model()
             text = tok.decode_batch(model.generate(audio[None, :]))[0].strip() if len(audio) >= 1600 else ""

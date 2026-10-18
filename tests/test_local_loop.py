@@ -37,7 +37,7 @@ def test_list_command_is_handled_before_the_llm(fake_llm):
     llm = fake_llm("should not be called")
     c = Conversation(Settings.load(), llm, None, None, TraceWriter(), Memory())
     r = c.respond("add a unit converter to my feature list", speak=False)
-    assert r.spoken == "Added to your feature list." and not llm.calls
+    assert r.spoken == "Added to your feature list: a unit converter." and not llm.calls
     assert lists.items("features")[0]["text"] == "a unit converter"
 
 
@@ -213,3 +213,16 @@ def test_web_demo_server_serves_page_without_a_session():
         assert e.value.code == 403
     finally:
         srv.stop()
+
+
+def test_session_report_lists_turns_and_problems(fake_llm, capsys):
+    from iris import cli
+    from iris.config import Settings
+    from iris.memory import Memory
+    from iris.pipeline import Conversation
+    from iris.trace import TraceWriter
+    c = Conversation(Settings.load(), fake_llm("I can certainly try to help with that."), None, None, TraceWriter(), Memory())
+    c.respond("tell me something", speak=False)
+    cli.main(["session"])
+    out = capsys.readouterr().out
+    assert "t1" in out and "tell me something" in out and "filler opener 1/1" in out and "false claims" in out

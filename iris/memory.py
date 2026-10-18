@@ -52,7 +52,16 @@ class Delta:
 # query, and it never competes with the chat model for the GPU. Loaded in the background
 # at session start; until it's ready (or if it's not installed) recall is keyword-only.
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
-SEM_MIN = 0.6               # cosine similarity that counts as "about the same thing"
+# Measured on real episodes: unrelated text scores 0.50-0.64 against these summaries and a
+# truly related one 0.66+, and the old 0.6 injected an irrelevant "OOP lesson" note on half the
+# turns of a session (80 tokens each, and distracting for a small model). So: a high floor, and
+# the best match must also stand clear of the typical score.
+SEM_MIN = 0.68
+SEM_MARGIN = 0.10
+_STOP = frozenset("""the and you your are was were what when where who how why can could would will did does not but for with that this
+these those have has had its it's i'm i've don't just like okay yes please tell about there their they them then than from into out
+over also very some any more most much one two get got let make made want need know think say said see look sure thing things
+way well really""".split())
 _emb = {"model": None, "state": "idle", "vecs": {}}
 
 
@@ -90,10 +99,9 @@ def semantic_recall(eps: list[tuple[str, str]], query: str, k: int = 2) -> list[
         scored = []
         for n, tx in eps:
             v = _emb["vecs"][(n, hashlib.md5(tx.encode()).hexdigest())]
-            s = float(v @ q / ((np.linalg.norm(v) * np.linalg.norm(q)) or 1.0))
-            if s >= SEM_MIN:
-                scored.append((s, n, tx))
-        scored.sort(reverse=True)
+            scored.append((float(v @ q / ((np.linalg.norm(v) * np.linalg.norm(q)) or 1.0)), n, tx))
+        floor = max(SEM_MIN, float(np.median([s for s, _, _ in scored])) + SEM_MARGIN)
+        scored = sorted((x for x in scored if x[0] >= floor), reverse=True)
         return [f"[{n}] {tx.strip()}" for _, n, tx in scored[:k]]
     except Exception as e:
         log.warning("semantic recall failed: %s", e)
@@ -149,7 +157,7 @@ class Memory:
         if not eps or not query.strip():
             return []
         docs = [words(t) for _, t in eps]
-        q = [w for w in words(query) if len(w) > 2]
+        q = [w for w in words(query) if len(w) > 2 and w not in _STOP]
         if not q:
             return []
         n = len(docs)
@@ -159,12 +167,14 @@ class Memory:
         for (name, text), d in zip(eps, docs):
             tf = Counter(d)
             s = 0.0
+            hit = 0
             for w in q:
                 if w not in tf:
                     continue
+                hit += 1
                 idf = math.log(1 + (n - df[w] + 0.5) / (df[w] + 0.5))
                 s += idf * tf[w] * 2.2 / (tf[w] + 1.2 * (0.25 + 0.75 * len(d) / avg))
-            if s >= min_score:
+            if s >= min_score and (hit >= 2 or s >= 2.2):      # one shared common word isn't a topic
                 scored.append((s, name, text))
         scored.sort(reverse=True)
         return [f"[{name}] {text.strip()}" for _, name, text in scored[:k]]

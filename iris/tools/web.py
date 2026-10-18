@@ -39,8 +39,20 @@ def search(query: str, max_results: int = 5, searxng_url: str | None = None, new
             from duckduckgo_search import DDGS   # older package name
         except ImportError:
             return "Web search isn't installed. Run: ./setup.sh (it installs the 'ddgs' package)."
-    with DDGS(timeout=10) as d:
-        raw = d.news(query, max_results=max_results) if news else d.text(query, max_results=max_results)
+    import time
+    raw = []
+    for attempt in range(3):                       # DuckDuckGo sometimes answers a valid query with nothing
+        with DDGS(timeout=10) as d:
+            try:
+                kind = news if attempt != 1 else not news            # second try: the other index
+                raw = d.news(query, max_results=max_results) if kind else d.text(query, max_results=max_results)
+            except Exception:
+                if attempt == 2:
+                    raise
+                raw = []
+        if raw:
+            break
+        time.sleep(0.6)
     items = [{"title": x.get("title"), "body": x.get("body") or x.get("excerpt"),
               "url": x.get("href") or x.get("url"), "date": x.get("date")} for x in raw or []]
     return _fmt(items, query)

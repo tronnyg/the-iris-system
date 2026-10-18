@@ -3,7 +3,9 @@
 The first sentence goes to the TTS as soon as it is complete (lowest time to first
 audio); a long first sentence is cut even earlier, at its first clause break ("Well, the
 short answer is yes, but ...") once `first_clause_chars` have arrived, so the voice starts
-while the model is still writing the rest. Later sentences are merged until `min_chunk_chars`, which keeps prosody
+while the model is still writing the rest. Models that write one long sentence without
+commas ("I can certainly try to adjust my tone to sound more ...") get cut at a phrase
+boundary (before "to", "and", "that", "because" ...) once `first_phrase_words` words are in. Later sentences are merged until `min_chunk_chars`, which keeps prosody
 natural and avoids per-chunk overhead. Very long run-on text is cut at a comma.
 """
 
@@ -20,8 +22,9 @@ _END_RE = re.compile(r"[.!?…]+[\"')\]]*(?=\s)|\n+")
 
 class SentenceSplitter:
     def __init__(self, min_chunk_chars: int = 60, first_chunk_min_chars: int = 0,
-                 max_chunk_chars: int = 240, first_clause_chars: int = 0):
+                 max_chunk_chars: int = 240, first_clause_chars: int = 0, first_phrase_words: int = 0):
         self.first_clause = first_clause_chars
+        self.first_phrase = first_phrase_words
         self.min_chunk = min_chunk_chars
         self.first_min = first_chunk_min_chars
         self.max_chunk = max_chunk_chars
@@ -66,15 +69,28 @@ class SentenceSplitter:
 
     _CLAUSE_RE = re.compile(r"(?:[,;:](?=\s)|\s[—–-]\s)")
 
+    # words a phrase can start with without sounding cut off ("... to adjust", "... that you")
+    _PHRASE_STARTERS = {"and", "but", "so", "because", "while", "which", "that", "when", "if", "or", "though",
+                        "although", "since", "then", "where", "who", "to", "with", "so"}
+
     def _early_clause(self) -> str | None:
-        """The first clause of a long first sentence, once it is clearly a clause."""
-        if not self.first_clause or self.emitted or self.pending or "[" in self.buf:
+        """The first clause (or phrase) of a long first sentence, once it is clearly one."""
+        if self.emitted or self.pending or "[" in self.buf:
             return None
-        for m in self._CLAUSE_RE.finditer(self.buf):
-            head = self.buf[:m.end()].strip()
-            if len(head) >= self.first_clause and len(head.split()) >= 4:
-                self.buf = self.buf[m.end():]
-                return head
+        if self.first_clause:
+            for m in self._CLAUSE_RE.finditer(self.buf):
+                head = self.buf[:m.end()].strip()
+                if len(head) >= self.first_clause and len(head.split()) >= 4:
+                    self.buf = self.buf[m.end():]
+                    return head
+        if self.first_phrase and not _END_RE.search(self.buf):
+            words = list(re.finditer(r"\S+", self.buf))
+            # a starter only counts once it is complete (followed by a space or another word)
+            for i in range(self.first_phrase, len(words) - 1):
+                if words[i].group().lower() in self._PHRASE_STARTERS and not words[i - 1].group().endswith(","):
+                    head = self.buf[:words[i].start()].strip()
+                    self.buf = self.buf[words[i].start():]
+                    return head
         return None
 
     def feed(self, delta: str) -> list[str]:

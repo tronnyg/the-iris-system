@@ -76,6 +76,11 @@ b { color: var(--accent); font-weight: 700; letter-spacing: .25em; }
 .sysline::before { content: "» "; color: var(--aqua-d); }
 
 .say { display: flex; gap: 6px; margin-top: 6px; }
+.busy { margin-top: 6px; padding: 3px 8px; border: 1px solid var(--yellow-d); color: var(--yellow); font-size: 12px;
+        letter-spacing: .06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.busy::before { content: "◜"; display: inline-block; margin-right: 8px; animation: spin 0.9s steps(4) infinite; }
+@keyframes spin { 0% { content: "◜"; } 25% { content: "◝"; } 50% { content: "◞"; } 75% { content: "◟"; } }
+@media (prefers-reduced-motion: reduce) { .busy::before { animation: none; } }
 input, select { background: var(--bg0); color: var(--fg); border: 1px solid var(--bg3); font: inherit;
                 padding: 5px 8px; min-width: 0; }
 input:focus, select:focus { outline: none; border-color: var(--accent); }

@@ -38,6 +38,75 @@ _SMALL = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six"
           "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100}
 
 
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
+_UNITS = {k: v for k, v in _SMALL.items() if v < 20}
+_SCALES = {"hundred": 100, "thousand": 1000, "million": 10**6}
+_NUMWORD = re.compile(r"\b(?:" + "|".join(sorted(list(_UNITS) + list(_TENS) + list(_SCALES) + ["point", "oh"], key=len, reverse=True)) + r")\b")
+
+
+def _numbers_to_digits(s: str) -> str | None:
+    """"seventeen times twenty three" -> "17 times 23": whole spoken numbers, not word by word.
+    None if a run of number words can't be read unambiguously (the model answers instead)."""
+    toks = s.split()
+    out: list[str] = []
+    i = 0
+    while i < len(toks):
+        w = re.sub(r"[^\w.]", "", toks[i])
+        if w not in _UNITS and w not in _TENS and w not in _SCALES and w not in ("a", "point"):
+            out.append(toks[i])
+            i += 1
+            continue
+        if w == "a":                                           # "a hundred", "a thousand"
+            if i + 1 < len(toks) and toks[i + 1] in ("hundred", "thousand", "million"):
+                total, cur, j = 0, 1, i + 1
+            else:
+                out.append(toks[i])
+                i += 1
+                continue
+        else:
+            total, cur, j = 0, 0, i
+        last = None
+        while j < len(toks):
+            x = re.sub(r"[^\w.]", "", toks[j])
+            if x in _UNITS and last in (None, "scale", "and", "tens") and not (last == "tens" and _UNITS[x] >= 10):
+                cur += _UNITS[x]
+                last = "units" if _UNITS[x] < 10 else "teens"
+            elif x in _TENS and last in (None, "scale", "and"):
+                cur += _TENS[x]
+                last = "tens"
+            elif x == "hundred" and last in ("units", "teens", "tens", None) :
+                cur = (cur or 1) * 100
+                last = "scale"
+            elif x in ("thousand", "million") and last in ("units", "teens", "tens", "scale", None):
+                total += (cur or 1) * _SCALES[x]
+                cur = 0
+                last = "scale"
+            elif x == "and" and last == "scale" and j + 1 < len(toks) and re.sub(r"[^\w.]", "", toks[j + 1]) in {**_UNITS, **_TENS}:
+                last = "and"
+            elif x == "point" and last is not None:             # "three point five", "two point one four"
+                digits, k = "", j + 1
+                while k < len(toks) and re.sub(r"[^\w.]", "", toks[k]) in _UNITS and _UNITS[re.sub(r"[^\w.]", "", toks[k])] < 10:
+                    digits += str(_UNITS[re.sub(r"[^\w.]", "", toks[k])])
+                    k += 1
+                if not digits:
+                    return None
+                out.append(f"{total + cur}.{digits}")
+                j = k
+                last = "done"
+                break
+            else:
+                break
+            j += 1
+        if last == "done":
+            i = j
+            continue
+        if last is None:
+            return None
+        out.append(str(total + cur))
+        i = j
+    return " ".join(out)
+
+
 def _ordinal(n: int) -> str:
     return f"{n}{'th' if 11 <= n % 100 <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
@@ -54,10 +123,14 @@ def _to_expr(text: str) -> str | None:
     """Spoken arithmetic -> a Python expression made only of numbers and operators."""
     s = text.lower().strip().rstrip("?.! ")
     s = re.sub(r"(?<=\d),(?=\d{3})", "", s)                     # 1,000 -> 1000
-    for w, n in _SMALL.items():                                 # "seven times six"
-        s = re.sub(rf"\b{w}\b", str(n), s)
+    s = re.sub(r"(?<=[a-z])-(?=[a-z])", " ", s).replace(",", " ")      # "twenty-three", "one thousand, two hundred"
+    s = _numbers_to_digits(s)
+    if s is None or re.search(r"\d\s+\d", s):                  # two numbers side by side: not a sum we can trust
+        return None
     for pat, rep in _WORDS:
         s = re.sub(pat, rep, s)
+    if _NUMWORD.search(s):
+        return None
     s = re.sub(r"\s+", "", s)
     if not re.fullmatch(r"[\d.+\-*/()%sqrt]+", s) or not re.search(r"\d", s):
         return None

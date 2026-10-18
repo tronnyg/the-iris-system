@@ -8,7 +8,7 @@ function that returns plain text. Two ways to call them, so any model works:
   text     other models are told to reply with one line like  <<search: query>>  and nothing
            else; IRIS intercepts that line before anything is spoken
 
-Which tools are on is set in pod.yaml (tools: {enabled: [...]}); default: all three.
+Which tools are on is set in pod.yaml (tools: {enabled: [...]}); default: all of them.
 """
 
 from __future__ import annotations
@@ -48,8 +48,8 @@ class ToolRun:
 
 
 def registry(settings=None) -> dict[str, Tool]:
-    from . import calc, clock, web
-    all_tools = {t.name: t for t in (web.tool(settings), calc.TOOL, clock.TOOL)}
+    from . import calc, clock, lists_tool, web
+    all_tools = {t.name: t for t in (web.tool(settings), calc.TOOL, clock.TOOL, lists_tool.ADD, lists_tool.SHOW)}
     cfg = ((settings.pod.get("tools") or {}) if settings is not None else {}) or {}
     enabled = cfg.get("enabled")
     if enabled is None:

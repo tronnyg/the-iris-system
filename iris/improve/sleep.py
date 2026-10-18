@@ -31,8 +31,22 @@ REFLECT_SYSTEM = (
     "(the user corrected the assistant, repeated themselves, interrupted, or said the "
     "answer was bad). Never record facts about the assistant itself. Wishes about how the "
     "assistant should work (new features, \"stop when I say stop\", \"log my feedback\") are "
-    "requests, not facts about the user: put them under user_requests. Reply with JSON only."
+    "requests, not facts about the user: put them under user_requests. A lesson is only about "
+    "what to say or how to answer in the next reply (\"When X, say Y\"); never a lesson about "
+    "changing the voice, logging, remembering, promising, testing, or implementing anything: the "
+    "assistant can't do those by trying harder. Reply with JSON only."
 )
+
+# lessons a small model invents that no reply can follow, and that make it promise things it can't do
+_BAD_LESSON_RE = re.compile(
+    r"\b(implement|increased intensity|design parameters|in (?:the )?future|next time|from now on|log (?:it|that|the|this)|"
+    r"save (?:it|that|the|this)|remember (?:it|that|this)|process (?:them|it)|adjust (?:your|its|the) (?:voice|tone|delivery)|"
+    r"change (?:your|its|the) (?:voice|tone|delivery)|promise)\b", re.I)
+
+
+def keep_lessons(lessons: list[str]) -> list[str]:
+    """Drop lessons that tell the assistant to promise, implement or change itself."""
+    return [l for l in lessons if not _BAD_LESSON_RE.search(l)]
 
 # "The user wants the assistant to ...": a feature request dressed up as a fact
 _REQUEST_RE = re.compile(
@@ -117,7 +131,7 @@ def reflect(turns: list[dict], memory: Memory, llm: Ollama) -> tuple[Delta, str]
                              {"role": "user", "content": prompt}],
                             options={"temperature": 0.2, "num_predict": 500, "num_ctx": 8192}) or {}
     delta = Delta.from_dict(out)
-    delta.user_add, delta.lessons_add = delta.user_add[:3], delta.lessons_add[:2]
+    delta.user_add, delta.lessons_add = delta.user_add[:3], keep_lessons(delta.lessons_add)[:2]
     delta.user_add, moved = split_requests(delta.user_add)
     reqs = out.get("user_requests") if isinstance(out.get("user_requests"), list) else []
     delta.requests = [str(x).strip() for x in reqs if str(x).strip()][:3] + moved

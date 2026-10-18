@@ -35,6 +35,7 @@ from .llm import Ollama
 from .memory import Memory
 from .pipeline import Conversation, feedback_command, llm_options
 from .stt import STT, is_filler
+from .textproc import asr_fix
 from .trace import TraceWriter
 from .tts.client import engine_load_options, make_tts, synth_opts
 from .util import log
@@ -62,6 +63,17 @@ class Session:
         paths.ensure_dirs()
         selfstore.init()
         self.s = Settings.load()
+        from . import voicefx
+        try:
+            from .config import sync_knobs
+            changed = voicefx.ensure_knobs(self.s.root)         # e.g. expressiveness range 0..1 -> 0..2
+            added = sync_knobs(self.s.root)                     # knobs added to the template since this agent began
+            if changed or added:
+                selfstore.commit("knobs: widened bounds / added from template" + (": " + ", ".join(added) if added else ""),
+                                 files=["pods/voice/pod.yaml"], auto=False)
+                self.s = Settings.load()
+        except Exception as e:
+            log.warning("could not update voice knobs: %s", e)
         ollama_ctl.ensure(self.s)             # IRIS's own Ollama (pods/brain/ollama.yaml)
         self.mode = mode
         self.speak = speak
@@ -111,7 +123,14 @@ class Session:
             self.player.start()
         if self.listen:
             self.stt = STT(self.s.model("stt", "base.en"))
-            print(f"  ears: whisper {self.stt.name} loaded in {self.stt.load():.1f}s (CPU)", flush=True)
+            try:
+                secs = self.stt.load()
+            except Exception as e:                       # e.g. Moonshine not installed or not downloaded
+                log.warning("speech recogniser %s failed to load (%s); using base.en", self.stt.name, e)
+                self.stt = STT("base.en")
+                secs = self.stt.load()
+            kind = "moonshine" if self.stt.moonshine else "whisper"
+            print(f"  ears: {kind} {self.stt.name} loaded in {secs:.1f}s (CPU)", flush=True)
             vad = vad_config(self.s)
             device = mic_device(self.mic, self.s)
             if self.headset is None:
@@ -210,9 +229,22 @@ class Session:
             if unanswered:
                 self.superseded.update(last)
         if unanswered:
+            self._adapt_hold(+1)               # your turn was ended too early: wait longer from now on
             r.carry_over()
             if self.conv and self.conv.busy():
                 self.conv.interrupt("resume")
+
+    def _adapt_hold(self, direction: int) -> None:
+        """Grow the extra end-of-turn hold when you resume after a cut-off, relax it on clean turns."""
+        r = self.recorder
+        if r is None:
+            return
+        v = self.s.pod.get("vad") or {}
+        step, cap, decay = int(v.get("hold_step_ms", 200)), int(v.get("hold_max_ms", 600)), int(v.get("hold_decay_ms", 50))
+        old = r.vad.adapt_ms
+        r.vad.adapt_ms = min(cap, old + step) if direction > 0 else max(0, old - decay)
+        if r.vad.adapt_ms != old:
+            log.info("end-of-turn hold %d -> %d ms", old, r.vad.adapt_ms)
 
     def _on_first_audio(self) -> None:
         """Called (from the TTS thread) when the first sentence of a reply is ready to play."""
@@ -222,6 +254,7 @@ class Session:
             return
         if self.cur_utt is not None:
             self._mark_handled(self.cur_utt.includes)
+            self._adapt_hold(-1)                # a turn went through cleanly
         if r is not None:
             r.allow_merge = False
             if self.mode == "vad":
@@ -306,14 +339,17 @@ class Session:
                                  hotwords=self.hotwords())
         if prompt and tr.text and _echoes_prompt(tr.text, prompt):
             tr.hallucination = True            # Whisper repeated its hint instead of hearing speech
+        tr.text = asr_fix.apply(tr.text, (self.s.pod.get("stt") or {}).get("corrections"))
         stt_done = time.perf_counter() - utt.t_end
         if self._is_superseded(utt):           # the user carried on talking while we transcribed
             return
         endpoint = {"method": utt.method, "speech_ms": utt.speech_ms,
                     "trailing_silence_ms": utt.trailing_silence_ms,
                     "merged_after_resume": utt.merged_after_resume,
-                    "reason": utt.end_reason or None, "turn_prob": utt.turn_prob}
+                    "reason": utt.end_reason or None, "turn_prob": utt.turn_prob, "segments": utt.segments or None,
+                    "hold_ms": (self.recorder.vad.adapt_ms if self.recorder else 0)}
         if not tr.text or tr.hallucination:
+            audio_rel = self.writer.keep_as(audio_rel, "f")        # not a turn: don't let the next one overwrite it
             self._mark_handled(utt.includes)
             self.writer.turn({"turn": None, "mode": utt.method, "audio_in": audio_rel, "user_text": tr.text,
                               "stt": tr.as_dict(), "endpoint": endpoint, "false_trigger": True})
@@ -328,6 +364,7 @@ class Session:
                               f"no-speech {tr.no_speech_prob if tr.no_speech_prob is not None else '?'}){hint}")
             return
         if is_filler(tr.text):           # "Um." / "Mm." alone: the user is thinking, keep listening
+            audio_rel = self.writer.keep_as(audio_rel, "u")
             self._mark_handled(utt.includes)
             self.writer.turn({"turn": None, "mode": utt.method, "audio_in": audio_rel, "user_text": tr.text,
                               "stt": tr.as_dict(), "endpoint": endpoint, "filler": True})
@@ -371,8 +408,9 @@ class Session:
                 pass
 
     def _on_tool(self, name: str, args: dict) -> None:
-        what = args.get("query") or args.get("expression") or ""
-        label = {"web_search": "searching the web", "calculator": "calculating", "current_time": "checking the time"}
+        what = args.get("query") or args.get("expression") or args.get("text") or args.get("list") or ""
+        label = {"web_search": "searching the web", "calculator": "calculating", "current_time": "checking the time",
+                 "add_to_list": "adding to your list", "show_list": "reading your list"}
         msg = f"{label.get(name, name)}{': ' + str(what) if what else ''}"
         self.writer.event("tool", name=name, args=args)
         self.bus.publish("tool", name=name, label=msg)
@@ -386,7 +424,7 @@ class Session:
         """Names Whisper should spell right: the agent's, pod.yaml stt.hotwords, and
         capitalised names from what IRIS remembers about you (cached per session)."""
         if getattr(self, "_hotwords", None) is None:
-            words = [self.s.display_name]
+            words = [self.s.display_name, "feature list", "todo list", "improvements list", "monotone"]
             words += [str(w) for w in ((self.s.pod.get("stt") or {}).get("hotwords") or [])]
             skip = {"The", "User", "They", "He", "She", "It", "IRIS", "Iris", "I"}
             for f in self.memory.facts():
@@ -739,7 +777,10 @@ def vad_config(s: Settings) -> VADConfig:
                      smart_turn=bool(v.get("smart_turn", True)),
                      turn_check_ms=int(v.get("turn_check_ms", 250)),
                      turn_threshold=float(v.get("turn_threshold", 0.5)),
-                     turn_max_ms=int(v.get("turn_max_ms", 2000)))
+                     turn_max_ms=int(v.get("turn_max_ms", 2000)),
+                     hold_ms=int(s.knob("vad.turn_hold_ms", 0)),
+                     long_speech_ms=int(v.get("long_speech_ms", 5000)),
+                     long_speech_extra_ms=int(v.get("long_speech_extra_ms", 200)))
 
 
 _WAKE_VARIANTS = {"iris": r"(?:irys|irus|iras|ires|eyris|irish|iris's)"}

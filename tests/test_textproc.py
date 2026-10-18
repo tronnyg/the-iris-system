@@ -138,3 +138,45 @@ def test_units_symbols_and_addresses_are_spoken_as_words():
     assert normalise("Fruit, e.g. apples & pears, vs. sweets") == "Fruit, for example, apples and pears, versus sweets"
     assert normalise("version 3.5 is out") == "version 3.5 is out"            # numbers left to the tuned rules
     assert Pronouncer().apply("512 MB") == "512 megabytes"                      # always on, whatever the engine
+
+
+def test_comma_free_first_sentence_starts_at_a_phrase_boundary():
+    from iris.textproc.splitter import SentenceSplitter
+    text = ("I can certainly try to adjust my tone to sound more enthusiastic and emphasize certain words "
+            "to give it that more human quality for you.")
+    sp = SentenceSplitter(first_clause_chars=30, first_phrase_words=10)
+    out = []
+    for i in range(0, len(text), 3):
+        out += sp.feed(text[i:i + 3])
+    out += sp.flush()
+    assert out[0] == "I can certainly try to adjust my tone to sound more enthusiastic"      # cut before "and"
+    assert " ".join(out).replace("  ", " ") == text                                          # nothing lost or doubled
+    # off: the whole sentence arrives as one chunk; short sentences are never cut
+    sp0 = SentenceSplitter(first_phrase_words=0)
+    assert sp0.feed(text[:80]) == [] and SentenceSplitter(first_phrase_words=10).feed("Yes, I can hear you clearly. ") == ["Yes, I can hear you clearly."]
+
+
+def test_recurring_mishearings_of_iris_vocabulary_are_fixed():
+    from iris.textproc import asr_fix
+    f = asr_fix.apply
+    assert f("To my future list the ability to see the progress.") == "To my feature list the ability to see the progress."
+    assert f("Yes, add that to the future list.") == "Yes, add that to the feature list."
+    assert f("Make it a little less monitor.") == "Make it a little less monotone."
+    assert f("Your voice is a lot more monitored") == "Your voice is a lot more monotone"
+    assert f("Two monotone.") == "too monotone."
+    assert f("You're talking two fast") == "You're talking too fast"
+    assert f("What does the future hold?") == "What does the future hold?"            # untouched
+    assert f("Keep an eye on the monitor please") == "Keep an eye on the monitor please"
+    assert f("hi tris", {"hi tris": "hey iris"}) == "hey iris"
+
+
+def test_discarded_audio_gets_its_own_file(iris_home):
+    import numpy as np
+    from iris import paths
+    from iris.trace import TraceWriter
+    w = TraceWriter()
+    a = w.save_audio(np.ones(1600, np.float32) * 0.1, 1)
+    kept = w.keep_as(a, "f")
+    b = w.save_audio(np.ones(1600, np.float32) * 0.2, 1)          # the next real turn 1
+    assert kept != b and (paths.audio_dir() / kept).exists() and (paths.audio_dir() / b).exists()
+    assert not (paths.audio_dir() / a).exists() or a == b

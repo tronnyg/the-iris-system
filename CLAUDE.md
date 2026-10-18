@@ -51,6 +51,8 @@ the data IRIS collected:
 | `iris/pipeline.py` | one turn: LLM stream -> sanitize -> split -> TTS -> playback; commands (ratings, lists, memory, voice) |
 | `iris/web/` | browser UI (stdlib server, SSE, `static/core.js` ASCII neural core, `static/app.js`) |
 | `iris/turn.py` | Silero speech detection + Smart Turn end-of-turn model (used by `audio.EnergyVAD`) |
+| `iris/actions.py`, `iris/fastpath.py` | do what is said (forced/recovered search, false-claim detection); instant time/date/maths answers |
+| `iris/voicefx.py` | live voice commands (long dictated requests, magnitudes) and rendering (chunk trimming, gaps, per-sentence variety) |
 | `iris/improve/night.py` | night/idle stages; `bench.py`, `insights.py` (findings + dossier), `sleep.py` (reflection) |
 | `iris/jobs.py` | background job control and systemd timers |
 | `iris/lists.py` | user lists and the voice phrases for them |

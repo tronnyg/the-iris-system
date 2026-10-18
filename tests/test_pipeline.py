@@ -153,7 +153,7 @@ def test_leaked_reasoning_is_never_spoken_and_a_clean_model_takes_over(fake_llm)
     c = Conversation(Settings.load(), llm, None, None, TraceWriter(), Memory(), on_text=said.append)
     r = c.respond("explain why two plus two makes four", speak=False)
     assert r.spoken == "The answer is four." and said == ["The answer is four."]
-    assert llm.calls == ["leaky:4b", "clean:4b"] and llm.model == "clean:4b"
+    assert llm.calls == ["leaky:4b", "leaky:4b", "clean:4b"] and llm.model == "clean:4b"      # one retry, then the switch
     assert model_traits("leaky:4b")["leaks"] and r.record["turn"] == 1 and len(turns()) == 1
     # next session starts on the clean model straight away
     llm2 = TwoModels(model="leaky:4b")
@@ -178,3 +178,66 @@ def test_normal_replies_pass_the_leak_guard(fake_llm):
         assert "leak" not in verdicts, text
     r = Conversation(Settings.load(), fake_llm("Four."), None, None, TraceWriter(), Memory()).respond("and the sum?", speak=False)
     assert r.spoken == "Four."
+
+
+def test_verified_clean_models_are_not_held_and_reply_raw_is_kept(fake_llm):
+    """The first sentence is only held for models not yet verified clean; after three clean
+    replies the hold stops, and the raw text always reaches the trace."""
+    from iris.config import Settings
+    from iris.memory import Memory
+    from iris.pipeline import Conversation, model_traits, set_model_trait
+    from iris.trace import TraceWriter, turns
+    llm = fake_llm("Tokyo is the capital of Japan.", model="new:4b")
+    c = Conversation(Settings.load(), llm, None, None, TraceWriter(), Memory())
+    for _ in range(3):
+        c.respond("tell me about japan", speak=False)
+    assert model_traits("new:4b")["leaks"] is False
+    assert all(t["reply_raw"] == "Tokyo is the capital of Japan." for t in turns())   # was empty for short replies
+    assert not c._needs_leak_guard()
+    deltas = []
+    c.on_delta = deltas.append
+    c.respond("again", speak=False)
+    assert "".join(deltas) == "Tokyo is the capital of Japan." and len(deltas) > 2       # streamed, not held back
+
+
+def test_one_leaked_reply_gets_a_retry_with_a_nudge_before_any_model_switch(fake_llm):
+    """A single third-person slip ("The user is asking ...") from a good model is retried on the
+    same model; the model is only marked leaky and replaced when it happens again."""
+    from iris.config import Settings
+    from iris.memory import Memory
+    from iris.pipeline import Conversation, model_traits
+    from iris.trace import TraceWriter
+
+    class SlipsOnce(fake_llm):
+        def installed_models(self):
+            return ["good:4b", "other:4b"]
+
+        def stream(self, messages, options=None, cancel=None, stats=None, think=False, fmt=None, **kw):
+            self.calls.append(messages[0]["content"])
+            nudged = "Answer the user directly" in messages[0]["content"]
+            text = "Sure, adding a status helps." if nudged else "The user is suggesting a status indicator, let me think."
+            if stats is not None:
+                stats.done_reason = "stop"
+            for i in range(0, len(text), 6):
+                yield text[i:i + 6]
+
+    llm = SlipsOnce(model="good:4b")
+    said = []
+    c = Conversation(Settings.load(), llm, None, None, TraceWriter(), Memory(), on_text=said.append)
+    r = c.respond("we need a status indicator", speak=False)
+    assert r.spoken == "Sure, adding a status helps." and said == ["Sure, adding a status helps."]
+    assert llm.model == "good:4b" and model_traits("good:4b").get("leaks") is None          # not condemned by one slip
+    assert len(llm.calls) == 2 and "Answer the user directly" not in llm.calls[0] and r.record["turn"] == 1
+
+
+def test_a_leaky_verdict_expires():
+    import json, time
+    from iris import paths
+    from iris.pipeline import model_traits, set_model_trait
+    set_model_trait("m:1b", leaks=True)
+    assert model_traits("m:1b")["leaks"] is True
+    p = paths.state_dir() / "model_traits.json"
+    d = json.loads(p.read_text())
+    d["m:1b"]["checked"] = time.time() - 4 * 86400
+    p.write_text(json.dumps(d))
+    assert "leaks" not in model_traits("m:1b")
