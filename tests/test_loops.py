@@ -46,8 +46,25 @@ def test_metrics_and_follow_ups():
     assert worse_by("judge_mean", 3.0, 4.0) == 0.25
 
 
+def test_with_smart_turn_the_tuner_adjusts_the_hold_not_the_silence_timer():
+    """vad.silence_ms does nothing once Smart Turn ends turns, so the cut-off rule must move
+    vad.turn_hold_ms instead (the old rule could never have fixed anything)."""
+    s = Settings.load()
+    assert (s.pod.get("vad") or {}).get("smart_turn", True)
+    m = {"turns": 30, "premature_eos_rate": 0.26, "trailing_wait_ms_p50": 300, "false_trigger_rate": 0.0,
+         "underruns_per_turn": 0.0, "first_audio_p50": 1.2, "truncated_rate": 0.0, "late_barge_in_rate": 0.0,
+         "format_violations_per_turn": 0.0, "prompt_eval_p50": 0.1}
+    ch = tuner.propose_changes(m, s)
+    assert [c["knob"] for c in ch] == ["vad.turn_hold_ms"] and ch[0]["to"] == 100
+    calm = dict(m, premature_eos_rate=0.0, trailing_wait_ms_p50=700)
+    s3 = Settings.load(overrides={"vad.turn_hold_ms": 300})
+    down = tuner.propose_changes(calm, s3)
+    assert [(c["knob"], c["from"], c["to"]) for c in down] == [("vad.turn_hold_ms", 300, 200)]     # relaxes when it waits needlessly
+
+
 def test_tuner_proposes_bounded_steps_and_rolls_back():
     s = Settings.load()
+    s.pod["vad"] = {"smart_turn": False}                  # the legacy silence-timer path
     m = {"turns": 30, "premature_eos_rate": 0.2, "trailing_wait_ms_p50": 700, "false_trigger_rate": 0.0,
          "underruns_per_turn": 0.0, "first_audio_p50": 1.2, "truncated_rate": 0.0, "late_barge_in_rate": 0.0,
          "format_violations_per_turn": 0.0, "prompt_eval_p50": 0.1}
@@ -58,7 +75,9 @@ def test_tuner_proposes_bounded_steps_and_rolls_back():
     assert Settings.load().knob("vad.silence_ms") == 750
     assert tuner.load_state()["active"][0]["knob"] == "vad.silence_ms"
     # a knob that's already being tested isn't touched again
-    assert tuner.propose_changes(m, Settings.load()) == []
+    legacy = Settings.load()
+    legacy.pod["vad"] = {"smart_turn": False}
+    assert tuner.propose_changes(m, legacy) == []
     # new turns after the change are worse -> automatic revert
     time.sleep(0.01)
     write_turns([turn(i, endpoint={"method": "vad", "merged_after_resume": i % 2 == 0, "trailing_silence_ms": 750})

@@ -65,8 +65,12 @@ class Session:
         self.s = Settings.load()
         from . import voicefx
         try:
-            if voicefx.ensure_knobs(self.s.root):               # e.g. expressiveness range 0..1 -> 0..2
-                selfstore.commit("voice knobs: widened bounds / added knobs", files=["pods/voice/pod.yaml"], auto=False)
+            from .config import sync_knobs
+            changed = voicefx.ensure_knobs(self.s.root)         # e.g. expressiveness range 0..1 -> 0..2
+            added = sync_knobs(self.s.root)                     # knobs added to the template since this agent began
+            if changed or added:
+                selfstore.commit("knobs: widened bounds / added from template" + (": " + ", ".join(added) if added else ""),
+                                 files=["pods/voice/pod.yaml"], auto=False)
                 self.s = Settings.load()
         except Exception as e:
             log.warning("could not update voice knobs: %s", e)
@@ -218,9 +222,22 @@ class Session:
             if unanswered:
                 self.superseded.update(last)
         if unanswered:
+            self._adapt_hold(+1)               # your turn was ended too early: wait longer from now on
             r.carry_over()
             if self.conv and self.conv.busy():
                 self.conv.interrupt("resume")
+
+    def _adapt_hold(self, direction: int) -> None:
+        """Grow the extra end-of-turn hold when you resume after a cut-off, relax it on clean turns."""
+        r = self.recorder
+        if r is None:
+            return
+        v = self.s.pod.get("vad") or {}
+        step, cap, decay = int(v.get("hold_step_ms", 200)), int(v.get("hold_max_ms", 600)), int(v.get("hold_decay_ms", 50))
+        old = r.vad.adapt_ms
+        r.vad.adapt_ms = min(cap, old + step) if direction > 0 else max(0, old - decay)
+        if r.vad.adapt_ms != old:
+            log.info("end-of-turn hold %d -> %d ms", old, r.vad.adapt_ms)
 
     def _on_first_audio(self) -> None:
         """Called (from the TTS thread) when the first sentence of a reply is ready to play."""
@@ -230,6 +247,7 @@ class Session:
             return
         if self.cur_utt is not None:
             self._mark_handled(self.cur_utt.includes)
+            self._adapt_hold(-1)                # a turn went through cleanly
         if r is not None:
             r.allow_merge = False
             if self.mode == "vad":
@@ -321,7 +339,8 @@ class Session:
         endpoint = {"method": utt.method, "speech_ms": utt.speech_ms,
                     "trailing_silence_ms": utt.trailing_silence_ms,
                     "merged_after_resume": utt.merged_after_resume,
-                    "reason": utt.end_reason or None, "turn_prob": utt.turn_prob}
+                    "reason": utt.end_reason or None, "turn_prob": utt.turn_prob, "segments": utt.segments or None,
+                    "hold_ms": (self.recorder.vad.adapt_ms if self.recorder else 0)}
         if not tr.text or tr.hallucination:
             audio_rel = self.writer.keep_as(audio_rel, "f")        # not a turn: don't let the next one overwrite it
             self._mark_handled(utt.includes)
@@ -751,7 +770,10 @@ def vad_config(s: Settings) -> VADConfig:
                      smart_turn=bool(v.get("smart_turn", True)),
                      turn_check_ms=int(v.get("turn_check_ms", 250)),
                      turn_threshold=float(v.get("turn_threshold", 0.5)),
-                     turn_max_ms=int(v.get("turn_max_ms", 2000)))
+                     turn_max_ms=int(v.get("turn_max_ms", 2000)),
+                     hold_ms=int(s.knob("vad.turn_hold_ms", 0)),
+                     long_speech_ms=int(v.get("long_speech_ms", 5000)),
+                     long_speech_extra_ms=int(v.get("long_speech_extra_ms", 200)))
 
 
 _WAKE_VARIANTS = {"iris": r"(?:irys|irus|iras|ires|eyris|irish|iris's)"}

@@ -52,6 +52,9 @@ class VADConfig:
     turn_check_ms: int = 250        # first check after this much silence
     turn_threshold: float = 0.5     # P(finished) needed to end the turn
     turn_max_ms: int = 2000         # end anyway after this much silence
+    hold_ms: int = 0                # baseline extra silence before a turn may end (knob vad.turn_hold_ms)
+    long_speech_ms: int = 5000      # after this much speech in one go ...
+    long_speech_extra_ms: int = 200  # ... wait this much longer: dictated thoughts pause between sentences
 
 
 class EnergyVAD:
@@ -66,6 +69,7 @@ class EnergyVAD:
         self.cfg = cfg
         self.noise = -60.0
         self.silero = self.turn = None
+        self.adapt_ms = 0               # session-level extra hold, grown when you resume after a cut-off
         if cfg.engine == "silero" or cfg.smart_turn:
             from . import turn
             self.silero = turn.load("silero") if cfg.engine == "silero" else None
@@ -113,12 +117,16 @@ class EnergyVAD:
         silent_ms = self.silence_run * FRAME_MS
         forced = speech_ms >= self.cfg.max_utterance_s * 1000
         reason = None
+        # Smart Turn answers "has this sentence ended?"; people dictating several sentences pause
+        # between them, so every turn waits a little longer: a tuned baseline, what this session
+        # showed it needs (adapt_ms), and more after long stretches of speech
+        extra = self.cfg.hold_ms + self.adapt_ms + (self.cfg.long_speech_extra_ms if speech_ms - silent_ms >= self.cfg.long_speech_ms else 0)
         if forced:
             reason = "max_length"
         elif self.turn is not None:
             if silent_ms == 0:
                 self.next_check_ms = 0
-            elif silent_ms >= max(self.cfg.turn_check_ms, self.next_check_ms):
+            elif silent_ms >= max(self.cfg.turn_check_ms + extra, self.next_check_ms):
                 try:
                     self.turn_prob = self.turn.complete_prob(np.concatenate(self.buf))
                 except Exception:
@@ -129,9 +137,9 @@ class EnergyVAD:
                 if self.turn_prob is not None and self.turn_prob >= need:
                     reason = "smart_turn"
                 self.next_check_ms = silent_ms + 400
-            if reason is None and silent_ms >= self.cfg.turn_max_ms:
+            if reason is None and silent_ms >= self.cfg.turn_max_ms + extra:
                 reason = "turn_timeout"
-        elif silent_ms >= self.cfg.silence_ms:
+        elif silent_ms >= self.cfg.silence_ms + extra:
             reason = "silence"
         if reason:
             keep = len(self.buf) - self.silence_run + max(1, 150 // FRAME_MS)   # keep 150 ms of tail
@@ -144,6 +152,7 @@ class EnergyVAD:
                 "forced": forced,
                 "reason": reason,
                 "turn_prob": None if self.turn_prob is None else round(self.turn_prob, 3),
+                "extra_ms": extra,
             }))
             self.turn_prob = None
             self.next_check_ms = 0
@@ -169,6 +178,7 @@ class Utterance:
     includes: tuple = ()                # uids of every utterance merged into this one (incl. itself)
     end_reason: str = ""                # silence | smart_turn | turn_timeout | max_length | ptt
     turn_prob: float | None = None      # end-of-turn model's P(finished) when the turn ended
+    segments: list = field(default_factory=list)   # every end-of-turn decision merged into this utterance
 
 
 class Recorder:
@@ -278,6 +288,9 @@ class Recorder:
                 if merged:
                     gap = np.zeros(int(MIC_SR * 0.2), dtype=np.float32)
                     audio = np.concatenate([self.last_audio, gap, audio])
+                seg = {"p": info.get("turn_prob"), "trail_ms": info["trailing_silence_ms"], "speech_ms": info["speech_ms"],
+                       "reason": info.get("reason"), "extra_ms": info.get("extra_ms")}
+                self._segs = (list(getattr(self, "_segs", [])) if merged else []) + [seg]
                 self.last_end = now
                 self.last_audio = audio
                 self.last_includes = includes
@@ -286,7 +299,8 @@ class Recorder:
                                             speech_ms=info["speech_ms"],
                                             trailing_silence_ms=info["trailing_silence_ms"],
                                             merged_after_resume=merged, uid=self._uid, includes=includes,
-                                            end_reason=info.get("reason") or "", turn_prob=info.get("turn_prob")))
+                                            end_reason=info.get("reason") or "", turn_prob=info.get("turn_prob"),
+                                            segments=list(self._segs)))
 
     def carry_over(self) -> None:
         """The reply to the last utterance was abandoned because the user kept talking:

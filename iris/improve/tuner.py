@@ -37,13 +37,25 @@ def _v(m: dict, k: str, default: float = 0.0) -> float:
     return default if v is None else v
 
 
+def _smart(s: Settings) -> bool:
+    """Smart Turn ends turns (vad.silence_ms is then not what decides when you're done)."""
+    return bool((s.pod.get("vad") or {}).get("smart_turn", True))
+
+
 RULES = [
     Rule("vad.silence_ms", +1, "premature_eos_rate",
-         lambda m, s: _v(m, "premature_eos_rate") > max(0.05, s.target("premature_eos_rate", 0.03)),
+         lambda m, s: not _smart(s) and _v(m, "premature_eos_rate") > max(0.05, s.target("premature_eos_rate", 0.03)),
          "it cut you off mid-thought too often", 10),
     Rule("vad.silence_ms", -1, "trailing_wait_ms_p50",
-         lambda m, s: m.get("premature_eos_rate") is not None and _v(m, "premature_eos_rate") <= 0.01
+         lambda m, s: not _smart(s) and m.get("premature_eos_rate") is not None and _v(m, "premature_eos_rate") <= 0.01
          and _v(m, "trailing_wait_ms_p50") >= 600, "it waited longer than needed after you finished", 20),
+    # with Smart Turn the knob that matters is the extra hold (the silence rules above did nothing)
+    Rule("vad.turn_hold_ms", +1, "premature_eos_rate",
+         lambda m, s: _smart(s) and _v(m, "premature_eos_rate") > max(0.05, s.target("premature_eos_rate", 0.03)),
+         "it ended your turn between sentences too often", 10),
+    Rule("vad.turn_hold_ms", -1, "trailing_wait_ms_p50",
+         lambda m, s: _smart(s) and m.get("premature_eos_rate") is not None and _v(m, "premature_eos_rate") <= 0.01
+         and _v(m, "trailing_wait_ms_p50") >= 500, "it waited longer than needed after you finished", 20),
     Rule("vad.threshold_db", +1, "false_trigger_rate",
          lambda m, s: _v(m, "false_trigger_rate") > 0.10, "background noise was mistaken for speech", 10),
     Rule("splitter.min_chunk_chars", +1, "underruns_per_turn",

@@ -154,6 +154,48 @@ def set_value(section: str, name: str, value: Any, root: Path | None = None) -> 
     return True
 
 
+def sync_knobs(root: Path | None = None, template: Path | None = None) -> list[str]:
+    """Add knobs that exist in the code repo's template pod.yaml but not in this agent's.
+
+    New defaults (a new auto-tuned knob) would otherwise never reach an existing agent: the
+    self store only copies whole files that are missing. Existing knobs are left alone."""
+    root = root or paths.self_dir()
+    template = template or (paths.REPO / "self_template" / "pods" / "voice" / "pod.yaml")
+    p = root / "pods/voice/pod.yaml"
+    try:
+        tt, text = template.read_text(), p.read_text()
+    except FileNotFoundError:
+        return []
+    have = (yaml.safe_load(text) or {}).get("knobs") or {}
+    want = (yaml.safe_load(tt) or {}).get("knobs") or {}
+    lines_t = tt.splitlines()
+    add: list[str] = []
+    names: list[str] = []
+    for name in want:
+        if name in have:
+            continue
+        line = next((l for l in lines_t if re.match(rf"^\s+{re.escape(name)}\s*:\s*\{{", l)), None)
+        if line:
+            add.append(line)
+            names.append(name)
+    if not add:
+        return []
+    lines = text.splitlines()
+    try:
+        i = next(n for n, l in enumerate(lines) if l.startswith("knobs:"))
+    except StopIteration:
+        lines += ["knobs:"]
+        i = len(lines) - 1
+    j = i + 1
+    while j < len(lines) and (lines[j].startswith("  ") or not lines[j].strip()):
+        j += 1
+    while j > i + 1 and not lines[j - 1].strip():
+        j -= 1
+    lines[j:j] = add
+    p.write_text("\n".join(lines) + "\n")
+    return names
+
+
 def _render(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
