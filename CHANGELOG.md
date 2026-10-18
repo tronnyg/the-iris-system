@@ -20,8 +20,14 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
   removed, vision 354 MiB kept), created as `gemma4:e4b-it-qat-vision` (ADR-0030).
 
 ### Changed
-- The live agent's recogniser is back to `moonshine/base` (large-v3-turbo on the GPU doesn't fit beside gemma4 and
-  Kokoro on 8 GB; ADR-0029).
+- The live agent's recogniser went back to `moonshine/base` (large-v3-turbo on the GPU doesn't fit beside gemma4 and
+  Kokoro on 8 GB; ADR-0029), then to `small.en@gpu` next to the vision-only LLM (18.8 % WER vs Moonshine's 26 %,
+  0.16 s; GPU peak 6.5 / 8.2 GB; ADR-0031).
+- The live LLM is `gemma4:e4b-it-qat-vision`: 700 MiB less GPU memory, same text answers, vision still works (ADR-0030).
+
+### Fixed
+- The GPU pre-flight measured the LLM with Ollama's `size_vram`, which leaves out a multimodal model's projector
+  (gemma4: 2969 reported vs 4330 MB held); it now measures the runner process (`vram.ollama_gpu_mb`).
 
 ### Docs
 - Detailed architecture docs: 15 pages in `docs/architecture/` with Mermaid diagrams for every part, a module map,

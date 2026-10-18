@@ -94,15 +94,61 @@ def _bench_vram(model: str) -> int | None:
     return int(rows[-1]["vram_mb"]) if rows else None
 
 
+def _descendants(pid: int) -> set[int]:
+    """`pid` and every process below it (Ollama's `serve` starts a separate runner per loaded model)."""
+    import os
+    children: dict[int, list[int]] = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            stat = open(f"/proc/{d}/stat").read()
+            ppid = int(stat.rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(int(d))
+    out, todo = set(), [pid]
+    while todo:
+        p = todo.pop()
+        if p not in out:
+            out.add(p)
+            todo += children.get(p, [])
+    return out
+
+
+def ollama_gpu_mb() -> int | None:
+    """GPU memory IRIS's Ollama really holds, per nvidia-smi. Ollama's own `size_vram` leaves out a
+    multimodal model's projector: gemma4 e4b reports 2969 MB but holds 4330 MB (2026-10-18)."""
+    from . import ollama_ctl
+    pid = ollama_ctl._pid()
+    if not pid:
+        return None
+    try:
+        rows = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=5).stdout.splitlines()
+    except Exception:
+        return None
+    mine = _descendants(pid)
+    total = 0
+    for r in rows:
+        try:
+            p, mb = (int(x) for x in r.split(","))
+        except ValueError:
+            continue
+        total += mb if p in mine else 0
+    return total or None
+
+
 def llm_need_mb(llm) -> tuple[int, bool]:
-    """(MiB the model takes, already resident?). Loaded: Ollama's own figure (remembered). Otherwise what
+    """(MiB the model takes, already resident?). Loaded: the larger of Ollama's figure and what its runner
+    really holds on the GPU (remembered). Otherwise what
     it took last time, or the benchmark's figure, or as a last resort the size of its weights: that
     over-counts models whose weights are mostly embeddings (gemma4 e4b: 7 GB on disk, 3 GB on the card)."""
     key = f"llm:{llm.model}"
     try:
         for m in llm.running():
             if m.get("name") in (llm.model, f"{llm.model}:latest") or m.get("model") == llm.model:
-                mb = round((m.get("size_vram") or 0) / 2**20)
+                mb = max(round((m.get("size_vram") or 0) / 2**20), ollama_gpu_mb() or 0)
                 if mb:
                     data = _learned()
                     data[key] = mb

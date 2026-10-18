@@ -173,8 +173,10 @@ five re-decodes multiplied latency on noise), and two hints:
 
 The live agent used `large-v3-turbo@gpu` for one session on 2026-10-18, then ran the GPU out of memory
 while encoding: gemma4 e4b takes 4.3 GB in a session (its vision and audio projectors load too), not the
-3 GB the benchmark had recorded. It is back on `moonshine/base` ([ADR-0029](../adr/0029-gpu-recogniser-fallback.md)).
-Three safeguards now:
+3 GB the benchmark had recorded. It went back to `moonshine/base` ([ADR-0029](../adr/0029-gpu-recogniser-fallback.md)); after the
+LLM's unused audio encoder was removed ([ADR-0030](../adr/0030-vision-only-llm-copy.md)) the live recogniser is
+`small.en@gpu`: 18.8 % WER, 0.16 s median, GPU peak 6.5 of 8.2 GB with the LLM and Kokoro
+([ADR-0031](../adr/0031-small-en-gpu-live-recogniser.md)). Three safeguards:
 
 * **Before loading**, `vram.plan` budgets a GPU recogniser *with* its encoder working memory (turbo 2 GB) and
   the LLM's size as last seen resident (learned after every warm-up), and puts the recogniser on the CPU

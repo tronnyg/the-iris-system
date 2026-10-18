@@ -693,3 +693,17 @@ def test_the_real_llm_size_is_learned_once_it_is_loaded_and_then_keeps_turbo_off
     cold = _LLM(None)
     v, stt_name, why = vram.plan("kokoro", "large-v3-turbo@gpu", None, cold, mem=(7400, 8192))
     assert stt_name == "moonshine/base" and v.engine == "kokoro"        # 4.5 + 0.8 + 2.0 + headroom does not fit
+
+
+def test_the_llms_real_gpu_use_beats_ollamas_own_figure(monkeypatch):
+    # Ollama's size_vram leaves out gemma4's vision/audio projector: 2969 MB reported, 4330 MB on the card
+    monkeypatch.setattr(vram, "ollama_gpu_mb", lambda: 4330)
+    assert vram.llm_need_mb(_LLM(2969)) == (4330, True)
+    assert vram.llm_need_mb(_LLM(None)) == (4530, False)                 # remembered for the next pre-flight
+    monkeypatch.setattr(vram, "ollama_gpu_mb", lambda: None)            # external Ollama: nothing to measure
+    assert vram.llm_need_mb(_LLM(3100)) == (3100, True)
+
+
+def test_descendant_processes_are_found():
+    import os
+    assert os.getpid() in vram._descendants(os.getppid())

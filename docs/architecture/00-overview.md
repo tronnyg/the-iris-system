@@ -163,9 +163,11 @@ The details of each box are in pages 01 to 05.
 | RAM | 15 GB | night-loop models are loaded one at a time |
 | OS | Arch / Omarchy, Wayland, systemd user session | timers, transient units, `notify-send` |
 
-Measured GPU memory: gemma4 e4b ≈ 4.3 GB in a session (2.97 GB in the benchmark, without its vision/audio
-projectors), Kokoro ≈ 0.9 GB, large-v3-turbo int8 ≈ 1.1 GB loaded plus encoder working memory, Chatterbox
-≈ 3.3 GB. Turbo on the GPU does not fit beside gemma4 and Kokoro ([ADR-0029](../adr/0029-gpu-recogniser-fallback.md)). `iris/vram.py` checks the sum before
+Measured GPU memory (runner processes, `nvidia-smi`): gemma4 e4b 4.33 GB with its vision+audio projector,
+3.49 GB as the vision-only copy IRIS uses ([ADR-0030](../adr/0030-vision-only-llm-copy.md)); Kokoro ≈ 0.75 GB;
+small.en int8 ≈ 0.37 GB loaded; large-v3-turbo int8 ≈ 1.1 GB loaded plus encoder working memory; Chatterbox
+≈ 3.3 GB. The live stack (vision LLM + Kokoro + small.en@gpu) peaks at 6.5 of 8.2 GB including the desktop.
+Ollama's own `size_vram` leaves out projectors, so `iris/vram.py` measures the runner. `iris/vram.py` checks the sum before
 anything loads ([ADR-0016](../adr/0016-kokoro-default-voice-and-vram-preflight.md)).
 
 ## 5. Module map (every source file → its page)

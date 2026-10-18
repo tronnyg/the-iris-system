@@ -27,9 +27,9 @@ environment variable the code reads is listed here.
 
 | Key | Default | Tier | Meaning |
 |---|---|---|---|
-| `llm` | `qwen3:4b` (template; the live agent uses `gemma4:e4b-it-qat`) | approve | the Ollama model for conversation |
+| `llm` | `qwen3:4b` (template; the live agent uses `gemma4:e4b-it-qat-vision`, gemma4 without its audio encoder) | approve | the Ollama model for conversation |
 | `llm_fallback` | unset | — | first choice when the leak guard switches models |
-| `stt` | `base.en` (template; live `moonshine/base`) | auto | speech recogniser; `choices` lists what the night loop compares; `@gpu` suffix = on the GPU |
+| `stt` | `base.en` (template; live `small.en@gpu`) | auto | speech recogniser; `choices` lists what the night loop compares; `@gpu` suffix = on the GPU |
 | `tts_engine` | `kokoro` | approve | `kokoro` or `chatterbox` (`tone` for tests) |
 
 ### `knobs` (bounded; `auto` ones are tuned overnight with rollback)
