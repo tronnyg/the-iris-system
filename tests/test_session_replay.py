@@ -626,3 +626,84 @@ def test_llm_size_comes_from_what_was_measured_not_the_file_size(monkeypatch):
     resident = _LLM(3100)
     assert vram.llm_need_mb(resident) == (3100, True)
     assert vram.llm_need_mb(cold) == (3300, False)                                              # now remembered from the real load
+
+
+# -- the GPU recogniser ran out of memory live (2026-10-18 22:12): turns must not be lost -------------------------
+class _GpuSTT:
+    name, on_gpu = "large-v3-turbo@gpu", True
+
+    def __init__(self, error="CUDA failed with error out of memory"):
+        self.error, self.dropped = error, False
+
+    def transcribe(self, audio, **kw):
+        raise RuntimeError(self.error)
+
+    def drop(self):
+        self.dropped = True
+
+
+class _CpuSTT:
+    on_gpu = False
+
+    def __init__(self, name):
+        self.name = name
+
+    def load(self):
+        return 0.1
+
+    def transcribe(self, audio, **kw):
+        from iris.stt import Transcript
+        return Transcript(text="okay, level higher", model=self.name, secs=0.1, audio_s=1.0)
+
+
+def _session():
+    from iris.talk import Session
+    return Session(mode="ptt", speak=False, listen=False, no_audio_device=True)
+
+
+def test_gpu_recogniser_failure_moves_hearing_to_the_cpu_and_keeps_the_turn(monkeypatch):
+    import numpy as np
+    import iris.talk as talk
+    s = _session()
+    gpu = s.stt = _GpuSTT()
+    monkeypatch.setattr(talk, "STT", _CpuSTT)
+    tr = s._transcribe(np.zeros(16000, dtype=np.float32), None)
+    assert tr.text == "okay, level higher"                      # the same audio, heard on the CPU
+    assert gpu.dropped and s.stt.name == "moonshine/base"
+    from iris import trace
+    ev = [r for r in trace.records() if r.get("type") == "stt_fallback"]
+    assert ev and ev[0]["frm"] == "large-v3-turbo@gpu" and "out of memory" in ev[0]["error"]
+
+
+def test_a_broken_cuda_context_counts_too_but_other_errors_are_raised(monkeypatch):
+    import numpy as np
+    import iris.talk as talk
+    monkeypatch.setattr(talk, "STT", _CpuSTT)
+    s = _session()
+    s.stt = _GpuSTT("parallel_for failed: cudaErrorInvalidDevice: invalid device ordinal")
+    assert s._transcribe(np.zeros(16000, dtype=np.float32), None).text
+    s.stt = _GpuSTT("some unrelated bug")
+    with pytest.raises(RuntimeError, match="unrelated"):
+        s._transcribe(np.zeros(16000, dtype=np.float32), None)
+
+
+def test_the_real_llm_size_is_learned_once_it_is_loaded_and_then_keeps_turbo_off_a_full_card():
+    resident = _LLM(4302)                                      # gemma4 e4b with its vision/audio projectors, live
+    vram.llm_need_mb(resident)
+    cold = _LLM(None)
+    v, stt_name, why = vram.plan("kokoro", "large-v3-turbo@gpu", None, cold, mem=(7400, 8192))
+    assert stt_name == "moonshine/base" and v.engine == "kokoro"        # 4.5 + 0.8 + 2.0 + headroom does not fit
+
+
+def test_the_llms_real_gpu_use_beats_ollamas_own_figure(monkeypatch):
+    # Ollama's size_vram leaves out gemma4's vision/audio projector: 2969 MB reported, 4330 MB on the card
+    monkeypatch.setattr(vram, "ollama_gpu_mb", lambda: 4330)
+    assert vram.llm_need_mb(_LLM(2969)) == (4330, True)
+    assert vram.llm_need_mb(_LLM(None)) == (4530, False)                 # remembered for the next pre-flight
+    monkeypatch.setattr(vram, "ollama_gpu_mb", lambda: None)            # external Ollama: nothing to measure
+    assert vram.llm_need_mb(_LLM(3100)) == (3100, True)
+
+
+def test_descendant_processes_are_found():
+    import os
+    assert os.getpid() in vram._descendants(os.getppid())

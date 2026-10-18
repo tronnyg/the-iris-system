@@ -179,8 +179,11 @@ flowchart TD
 
 Sizes come from, in order: `tts.<engine>.vram_mb` in pod.yaml, what was learned from real loads
 (`state/vram.json`: worker peak + 300 MB CUDA context; LLM `size_vram` from `/api/ps`), the benchmark's
-measurement (`state/bench.jsonl`), then defaults (Kokoro 800, Chatterbox 3300 MB, turbo 1500 MB). The
-LLM's file size is the last resort only: gemma4 e4b is 7 GB on disk but ~3 GB on the card.
+measurement (`state/bench.jsonl`), then defaults (Kokoro 800, Chatterbox 3300 MB; recognisers including
+encoder working memory: turbo 2000, small.en 900, base.en 600 MB). The LLM's size is learned every time it is
+warmed up in a session, as the larger of Ollama's `size_vram` and what its runner process really holds
+(`vram.ollama_gpu_mb`, from `nvidia-smi`); the file size is the last resort only. Measured: gemma4 e4b is
+7 GB on disk, Ollama reports 2969 MB, its runner holds 4330 MB (the projector isn't in Ollama's figure).
 
 ## 8. Playback and barge-in
 

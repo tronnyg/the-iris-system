@@ -41,6 +41,18 @@ a running conversation's LLM down with it. The unit lives on its own.
 Default server env: `OLLAMA_KEEP_ALIVE=30m`, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`.
 `mode: external` (or `IRIS_OLLAMA=external`) uses `$OLLAMA_HOST` as it is.
 
+### Multimodal models: drop what IRIS doesn't use
+
+Ollama loads a model's whole projector onto the GPU. gemma4 e4b's projector holds a vision encoder (354 MiB)
+and an audio encoder (591 MiB); IRIS hears through its own recogniser, so the audio encoder only costs memory.
+`scripts/strip_mmproj_audio.py SRC NEW` makes a copy with the same weights, renderer and parameters and a
+vision-only projector (`ollama create`, ~360 MB added to the store; `ollama rm NEW` undoes it):
+
+```bash
+uv run --no-project --with gguf python scripts/strip_mmproj_audio.py gemma4:e4b-it-qat gemma4:e4b-it-qat-vision
+iris set model llm gemma4:e4b-it-qat-vision
+```
+
 ## 2. The LLM client
 
 `Ollama(model)` is a thin adapter over `/api/chat`, streaming:

@@ -41,7 +41,7 @@ decision was made.
 | [0014](0014-deterministic-skills-before-the-model.md) | Deterministic skills before the model | Accepted | 2026-10-18 |
 | [0015](0015-honesty-layer.md) | Honesty layer: forced tools, false-claim detection | Accepted | 2026-10-18 |
 | [0016](0016-kokoro-default-voice-and-vram-preflight.md) | Kokoro as the default voice; GPU memory pre-flight | Accepted | 2026-10-18 |
-| [0017](0017-speech-recognition-choices.md) | Speech recognition: large-v3-turbo on the GPU | Accepted | 2026-10-18 |
+| [0017](0017-speech-recognition-choices.md) | Speech recognition: large-v3-turbo on the GPU | Superseded by ADR-0029 | 2026-10-18 |
 | [0018](0018-garble-guard.md) | Ask "did you say …?" on low-confidence transcripts | Accepted | 2026-10-18 |
 | [0019](0019-lists-only-explicit-requests.md) | Lists hold only explicit requests; guesses are hidden | Accepted | 2026-10-18 |
 | [0020](0020-steady-pitch-and-taught-pronunciations.md) | One steady pitch; pronunciations taught by voice | Accepted | 2026-10-18 |
@@ -53,3 +53,6 @@ decision was made.
 | [0026](0026-rejected-kokoro-prosody-markup.md) | Kokoro prosody markup for emphasis | Rejected | 2026-10-18 |
 | [0027](0027-rejected-local-coding-agent.md) | A local coding agent for self-improvement | Rejected | 2026-10-18 |
 | [0028](0028-proposed-cloud-autopilot-variant.md) | A free cloud-model autopilot as a variant | Proposed | 2026-10-18 |
+| [0029](0029-gpu-recogniser-fallback.md) | Moonshine back as the live recogniser; GPU recogniser falls back at run time | Accepted | 2026-10-18 |
+| [0030](0030-vision-only-llm-copy.md) | Run the LLM without its audio encoder (vision kept) | Accepted | 2026-10-18 |
+| [0031](0031-small-en-gpu-live-recogniser.md) | small.en on the GPU as the live recogniser | Accepted | 2026-10-18 |

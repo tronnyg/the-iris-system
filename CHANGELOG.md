@@ -8,6 +8,27 @@ Entries before 2026-10-18 `docs/architecture-and-adrs` were reconstructed from t
 
 ## [Unreleased]
 
+### Fixed
+- A GPU recogniser that fails mid-session (CUDA out of memory, broken context) no longer loses turns: the session
+  switches to `moonshine/base` and transcribes the same audio again (trace event `stt_fallback`).
+- GPU memory pre-flight underestimated: the LLM's real resident size is now learned after every warm-up (gemma4 e4b
+  is 4.3 GB in a session with its vision/audio projectors, not the benchmark's 3 GB), and GPU recognisers are
+  budgeted with their encoder working memory (turbo 2 GB).
+
+### Added
+- `scripts/strip_mmproj_audio.py`: a vision-only copy of a multimodal Ollama model (gemma4 e4b: audio encoder 591 MiB
+  removed, vision 354 MiB kept), created as `gemma4:e4b-it-qat-vision` (ADR-0030).
+
+### Changed
+- The live agent's recogniser went back to `moonshine/base` (large-v3-turbo on the GPU doesn't fit beside gemma4 and
+  Kokoro on 8 GB; ADR-0029), then to `small.en@gpu` next to the vision-only LLM (18.8 % WER vs Moonshine's 26 %,
+  0.16 s; GPU peak 6.5 / 8.2 GB; ADR-0031).
+- The live LLM is `gemma4:e4b-it-qat-vision`: 700 MiB less GPU memory, same text answers, vision still works (ADR-0030).
+
+### Fixed
+- The GPU pre-flight measured the LLM with Ollama's `size_vram`, which leaves out a multimodal model's projector
+  (gemma4: 2969 reported vs 4330 MB held); it now measures the runner process (`vram.ollama_gpu_mb`).
+
 ### Docs
 - Detailed architecture docs: 15 pages in `docs/architecture/` with Mermaid diagrams for every part, a module map,
   a configuration reference and the data layout; `docs/README.md` as the index with documentation rules for people
