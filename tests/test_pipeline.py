@@ -178,3 +178,23 @@ def test_normal_replies_pass_the_leak_guard(fake_llm):
         assert "leak" not in verdicts, text
     r = Conversation(Settings.load(), fake_llm("Four."), None, None, TraceWriter(), Memory()).respond("and the sum?", speak=False)
     assert r.spoken == "Four."
+
+
+def test_verified_clean_models_are_not_held_and_reply_raw_is_kept(fake_llm):
+    """The first sentence is only held for models not yet verified clean; after three clean
+    replies the hold stops, and the raw text always reaches the trace."""
+    from iris.config import Settings
+    from iris.memory import Memory
+    from iris.pipeline import Conversation, model_traits, set_model_trait
+    from iris.trace import TraceWriter, turns
+    llm = fake_llm("Tokyo is the capital of Japan.", model="new:4b")
+    c = Conversation(Settings.load(), llm, None, None, TraceWriter(), Memory())
+    for _ in range(3):
+        c.respond("tell me about japan", speak=False)
+    assert model_traits("new:4b")["leaks"] is False
+    assert all(t["reply_raw"] == "Tokyo is the capital of Japan." for t in turns())   # was empty for short replies
+    assert not c._needs_leak_guard()
+    deltas = []
+    c.on_delta = deltas.append
+    c.respond("again", speak=False)
+    assert "".join(deltas) == "Tokyo is the capital of Japan." and len(deltas) > 2       # streamed, not held back

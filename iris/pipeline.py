@@ -189,6 +189,7 @@ class Conversation:
         self.on_turn = on_turn or (lambda rec: None)          # the finished turn record
         self.on_interrupt = on_interrupt or (lambda reason: None)
         self.fallbacks_tried: set[str] = set()
+        self._clean_replies: dict[str, int] = {}
         if model_traits(getattr(llm, "model", "")).get("leaks"):
             self._switch_model(reason="known to leak its reasoning")
         self.commit_memory = commit_memory
@@ -311,7 +312,8 @@ class Conversation:
         messages[0] = {**messages[0], "content": messages[0]["content"] + "\n\n" + "\n\n".join(extra)}
         options = llm_options(s, self.llm.model)
         splitter = SentenceSplitter(min_chunk_chars=int(s.knob("splitter.min_chunk_chars", 60)),
-                                    first_clause_chars=int(s.knob("splitter.first_clause_chars", 30)))
+                                    first_clause_chars=int(s.knob("splitter.first_clause_chars", 30)),
+                                    first_phrase_words=int(s.knob("splitter.first_phrase_words", 10)))
         think = ThinkFilter()
         report = Report()
         stats = LLMStats()
@@ -384,10 +386,15 @@ class Conversation:
                 kw = {}
                 if native and round_no < 2:
                     kw = {"tools": [t.schema() for t in self.tools.values()], "tool_calls": calls}
-                guard = LeakGuard() if round_no == 0 and not fast else None
+                # a held first sentence delays the voice by that sentence: only models that
+                # haven't been verified clean (bench probe, or a few clean replies) get it
+                guard = LeakGuard() if round_no == 0 and not fast and self._needs_leak_guard() else None
                 for delta in llm.stream(msgs, options=options, cancel=live.cancel, stats=stats, **kw):
                     if timing.get("first_token") is None:
                         timing["first_token"] = time.perf_counter() - t0
+                    raw.append(delta)
+                    round_raw.append(delta)
+                    self.on_delta(delta)
                     if guard is not None:
                         out, verdict = guard.feed(delta)
                         if verdict == "leak":
@@ -395,10 +402,9 @@ class Conversation:
                             break
                         if verdict is None:
                             continue
+                        if verdict == "clean":
+                            self._note_clean_reply()
                         delta, guard = out, None
-                    raw.append(delta)
-                    round_raw.append(delta)
-                    self.on_delta(delta)
                     if hold:
                         held += delta
                         st = held.lstrip()
@@ -452,6 +458,7 @@ class Conversation:
                     msgs.append({"role": "user", "content": "Tool result:\n" + "\n\n".join(tr.result for tr in results)
                                  + "\n\nNow answer my previous message using this. Don't mention the tool."})
             if guard is not None and not leaked and guard.lead:      # short reply: never reached a verdict
+                self._note_clean_reply()
                 for c in splitter.feed(think.feed(guard.lead)):
                     emit(c)
             if not live.cancel.is_set() and not leaked:
@@ -550,6 +557,16 @@ class Conversation:
         except Exception as e:
             log.warning("on_turn callback failed: %s", e)
         return TurnResult(record=rec, spoken=spoken, cancelled=cancelled)
+
+    def _needs_leak_guard(self) -> bool:
+        return model_traits(self.llm.model).get("leaks") is not False      # unknown or known-leaky
+
+    def _note_clean_reply(self) -> None:
+        """Three replies in a row that read like answers: stop holding the first sentence."""
+        n = self._clean_replies.get(self.llm.model, 0) + 1
+        self._clean_replies[self.llm.model] = n
+        if n >= 3:
+            set_model_trait(self.llm.model, leaks=False)
 
     def _switch_model(self, reason: str) -> bool:
         """Use another installed model for the rest of this conversation.

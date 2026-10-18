@@ -138,3 +138,19 @@ def test_units_symbols_and_addresses_are_spoken_as_words():
     assert normalise("Fruit, e.g. apples & pears, vs. sweets") == "Fruit, for example, apples and pears, versus sweets"
     assert normalise("version 3.5 is out") == "version 3.5 is out"            # numbers left to the tuned rules
     assert Pronouncer().apply("512 MB") == "512 megabytes"                      # always on, whatever the engine
+
+
+def test_comma_free_first_sentence_starts_at_a_phrase_boundary():
+    from iris.textproc.splitter import SentenceSplitter
+    text = ("I can certainly try to adjust my tone to sound more enthusiastic and emphasize certain words "
+            "to give it that more human quality for you.")
+    sp = SentenceSplitter(first_clause_chars=30, first_phrase_words=10)
+    out = []
+    for i in range(0, len(text), 3):
+        out += sp.feed(text[i:i + 3])
+    out += sp.flush()
+    assert out[0] == "I can certainly try to adjust my tone to sound more enthusiastic"      # cut before "and"
+    assert " ".join(out).replace("  ", " ") == text                                          # nothing lost or doubled
+    # off: the whole sentence arrives as one chunk; short sentences are never cut
+    sp0 = SentenceSplitter(first_phrase_words=0)
+    assert sp0.feed(text[:80]) == [] and SentenceSplitter(first_phrase_words=10).feed("Yes, I can hear you clearly. ") == ["Yes, I can hear you clearly."]

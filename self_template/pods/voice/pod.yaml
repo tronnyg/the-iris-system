@@ -31,6 +31,7 @@ knobs:
   llm.history_turns:         {value: 12,   min: 4,    max: 24,   step: 2,    tier: auto}
   splitter.min_chunk_chars:  {value: 60,   min: 20,   max: 160,  step: 10,   tier: auto}
   splitter.first_clause_chars: {value: 30,   min: 0,    max: 90,   step: 10,   tier: auto}   # speak a long first sentence from its first clause
+  splitter.first_phrase_words: {value: 10,   min: 0,    max: 20,   step: 1,    tier: auto}   # ...or from a phrase boundary after this many words (0 = off)
   tts.speed:                 {value: 1.0,  min: 0.85, max: 1.2,  step: 0.05, tier: approve}
   # live voice tuning: say "too fast", "louder", "too deep", "too monotone", "longer pauses", "undo"
   tts.volume_db:             {value: 0,    min: -12,  max: 12,   step: 2,    tier: approve}
@@ -59,7 +60,7 @@ wake:
   follow_up_s: 12         # stay awake this long after each reply, so follow-ups need no wake word
 
 tools:
-  enabled: [web_search, calculator, current_time]
+  enabled: [web_search, calculator, current_time, add_to_list, show_list]
   searxng_url: null       # your own SearXNG (fully self-hosted search); null = DuckDuckGo via ddgs
   max_results: 5
 
